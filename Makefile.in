@@ -1,0 +1,45 @@
+LDFLAGS+=@LDFLAGS@
+LIBS+=@LIBS@
+CFLAGS+=-Wall @CPPFLAGS@ @CFLAGS@
+#msgpack chock on -Wunused-function
+CFLAGS+=-Wno-unused-function
+
+#Set a few distribution variables
+DISTNAME=@PACKAGE_NAME@-@PACKAGE_VERSION@
+DISTDIR=${DISTNAME}
+DISTBALL=${DISTNAME}.tgz
+
+#BASEFILES represents all *source* files, in the truest sense (no auto* artifacts)
+BASEFILES=Makefile.in configure.ac mod_log_net.c
+
+#DISTFILES represents all distributable files, including auto* artifacts and BASEFILES
+DISTFILES=configure ${BASEFILES}
+
+APXS_LIBEXECDIR:=$(shell @APXS@ -q LIBEXECDIR)
+all: mod_log_net.la
+
+mod_log_net.la: mod_log_net.c
+	@APXS@ -c ${LIBS} -Wc,"${CFLAGS} ${CPPFLAGS}" -Wl,"${LDFLAGS}" mod_log_net.c
+
+install: mod_log_net.la
+	if test ! -d ${DESTDIR}${APXS_LIBEXECDIR}; then mkdir -p ${DESTDIR}${APXS_LIBEXECDIR}; fi
+	@APXS@ -i -S LIBEXECDIR=${DESTDIR}${APXS_LIBEXECDIR} mod_log_net.la
+
+clean:
+	rm -rf mod_log_net.slo mod_log_net.la mod_log_net.lo mod_log_net.o .libs
+
+distclean: clean
+	rm -rf config.h config.h.in~ config.log config.status autom4te.cache Makefile 
+        
+baseclean: distclean
+	rm -rf configure
+
+dist: ${DISTBALL}
+
+${DISTBALL}:
+	rm -f ${DISTBALL}
+	mkdir ${DISTDIR} || true
+	cp ${DISTFILES} ${DISTDIR}
+	tar -czvf ${DISTBALL} ${DISTDIR}
+	rm -rf ${DISTDIR}
+
