@@ -1,3 +1,7 @@
+srcdir = @srcdir@
+top_srcdir = @top_srcdir@
+VPATH = @srcdir@
+
 LDFLAGS+=@LDFLAGS@
 LIBS+=@LIBS@
 CFLAGS+=-Wall @CPPFLAGS@ @CFLAGS@
@@ -19,7 +23,7 @@ APXS_LIBEXECDIR:=$(shell @APXS@ -q LIBEXECDIR)
 all: mod_log_net.la
 
 mod_log_net.la: mod_log_net.c
-	@APXS@ -c ${LIBS} -Wc,"${CFLAGS} ${CPPFLAGS}" -Wl,"${LDFLAGS}" mod_log_net.c
+	@APXS@ -c ${LIBS} -Wc,"${CFLAGS} ${CPPFLAGS}" -Wl,"${LDFLAGS}" $<
 
 install: mod_log_net.la
 	if test ! -d ${DESTDIR}${APXS_LIBEXECDIR}; then mkdir -p ${DESTDIR}${APXS_LIBEXECDIR}; fi

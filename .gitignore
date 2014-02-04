@@ -16,3 +16,6 @@
 *.exe
 *.out
 *.app
+mod_log_net.lo
+mod_log_net.slo
+mod_log_net.la
