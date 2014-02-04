@@ -5,7 +5,7 @@ VPATH = @srcdir@
 LDFLAGS+=@LDFLAGS@
 LIBS+=@LIBS@
 CFLAGS+=-Wall @CPPFLAGS@ @CFLAGS@
-#msgpack chock on -Wunused-function
+#msgpack chokes on -Wunused-function
 CFLAGS+=-Wno-unused-function
 
 #Set a few distribution variables

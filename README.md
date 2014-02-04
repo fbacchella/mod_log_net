@@ -69,3 +69,16 @@ For entries that need options, uses LognetEntry:
 
     LognetEntry header_in Host
     LognetEntry cookie id
+
+# Using it with logstash
+
+Add in /etc/logstash/conf.d/ a file:
+
+    input {
+      udp {
+        port  => 1516
+        type  => httpdpack
+        codec => msgpack
+      }
+    }
+    
