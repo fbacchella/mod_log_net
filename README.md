@@ -18,6 +18,16 @@ Load it with `LoadModule log_net_module .../mod_log_net.so`
 
 `LognetEntries` and `LognetEntry` can be used many time.
 
+A `LognetEntries` is a sequences of values name to add in the log message.
+
+    LognetEntries value_name [value_name ...]
+
+A `LognetEntry` is a value name, followed by a optionnal parameter and options:
+
+    LognetEntry value_name [parameter] [option[=value] ...]]
+
+This a server level configuration.
+
 # Installation
 
     ./configure --with-msgpack=/opt/local
@@ -28,38 +38,34 @@ Load it with `LoadModule log_net_module .../mod_log_net.so`
 
 The logged information are copied from mod_log_config. Generaly any logged value match with a custom log entitie, and share options.
 
- * `bytes_sent`:  bytes sent, excluding HTTP headers, same as `%B`
- * `cookie`:  The contents of the HTTP cookie FOOBAR, same as `, %{FOOBAR}C`
- * `env_var`: The contents of the environment variable FOOBAR, same  %{FOOBAR}e
- * `request_file`: filename, same as  `%f`
- * `remote_host`:  remote host, same as `%h`
- * `remote_address`:  remote IP-address, same as `%a`
- * `local_address`:  local IP-address, same as `%A`
- * `header_in`:  The contents of Foobar: header line(s) in the request sent to the client. %...{Foobar}i
- * `requests_on_connection`:  number of keepalive requests served over this connection %...k
- * `remote_logname`:  remote logname (from identd, if supplied), same as `%l`
- * `note`:  The contents of note "Foobar" from another module. %...{Foobar}n
- * `header_out`:  The contents of Foobar: header line(s) in the reply. %...{Foobar}o
- * `server_port`:  the canonical port for the server, same as `%p`
-     %...{format}p: the canonical port for the server, or the actual local or remote port
- * `pid_tid`:  the process ID of the child that serviced the request, same as %P
-    %...{format}P: the process ID or thread ID of the child/thread that serviced the request
- * `status`:  status, same as %s
-  %...s  For requests that got internally redirected, this is status of the *original* request --- %...>s for the last.
- * `request_time`:  time, in common log format time format
- //%...t
-//%...{format}t:  The time, in the form given by format, which should be in strftime(3) format.
- * `request_duration`:  the time taken to serve the request, in seconds, same as %T
- * `request_duration_microseconds`:  the time taken to serve the request, in micro seconds, same as %D
- * `remote_user`:  remote user (from auth; may be bogus if return status (%s) is 401), same as %u
- * `request_uri`:  the URL path requested, same as %U
- * `virtual_host`:  the configured name of the server (i.e. which virtual host?), same as %v
- * `server_name`:  the server name according to the UseCanonicalName setting
- //%...V
- * `request_method`:  the request method, same as %m
- * `request_protocol`:  the request protocol, same as %H
- * `request_query`:  the query string, same as %q, but without the '?'
- * `connection_status`:  Status of the connection, same as %X
+ * `bytes_sent`: Bytes sent, excluding HTTP headers. Same as `%B`
+ * `cookie`:  The contents of the HTTP cookie given by the parameter. Same as `, %{FOOBAR}C`
+ * `env_var`: The contents of the environment variable given by the parameter. Only version 0 cookies are fully supported. Same as %{FOOBAR}e.
+ * `request_file`: Filename. Same as `%f`
+ * `remote_host`: Remote host. Same as `%h`
+ * `remote_address`: Remote IP-address. Same as `%a`
+ * `local_address`: Local IP-address. Same as `%A`
+ * `header_in`: The contents of header line(s) given by the parameter in the request sent to the client. Same as %{Foobar}i.
+ * `requests_on_connection`: The umber of keepalive requests served over this connection. Same as %k
+ * `remote_logname`: The remote logname (from identd, if supplied). Same as %l
+ * `note`:  The contents of note "Foobar" from another module. Same as %{Foobar}n
+ * `header_out`:  The contents of Foobar: header line(s) in the reply. Same as %...{Foobar}o
+ * `server_port`:  The canonical port for the server. The parameter can be `canonical`, `local`, or `remote`. Same as `%p`.
+ * `pid_tid`: The process ID of the child that serviced the request. Valid parameter can be `pid`, `tid`, and `hextid`. `hextid` requires APR 1.2.0 or higher. Default is `pid`. Same as %P
+ * `status`: The query status. For requests that got internally redirected, this is status of the *original* request . Same as %s
+ * `request_time`: The request start time, in ISO 8601 format, with microseconds precision. If the `format` option is given, it will be formatted using strftime(3)
+ * `request_duration`: The time taken to serve the request, in seconds. Same as %T
+ * `request_duration_microseconds`:  The time taken to serve the request, in micro seconds. Same as %D.
+ * `remote_user`: The remote user (from auth; may be bogus if return status (%s) is 401). Same as %u.
+ * `request_uri`: The URL path requested. Same as %U
+ * `virtual_host`: The configured name of the server (i.e. which virtual host?). Same as %v.
+ * `server_name`: The server name according to the UseCanonicalName setting. Same as %V.
+ * `request_method`: The request method. Same as %m.
+ * `request_protocol`: The request protocol. Same as %H.
+ * `request_query`: The query string. Same as %q, but without the '?'.
+ * `connection_status`:  Status of the connection. Same as %X.
+ 
+Msgpack is a typed format, so when is non existent, a null value will be returned, instead of '-' as in mod_log_config.
 
 Simple entries can be added with LognetEntries:
 
@@ -69,6 +75,10 @@ For entries that need options, uses LognetEntry:
 
     LognetEntry header_in Host
     LognetEntry cookie id
+
+A common option is name=`name` that can be used to change a field name in the message. For example
+
+    LognetEntry request_uri name=uri
 
 # Using it with logstash
 

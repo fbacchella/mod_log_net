@@ -19,7 +19,7 @@ module AP_MODULE_DECLARE_DATA log_net_module;
 
 typedef struct log_entry_info_t {
     void (*pack_entry)(msgpack_packer*, request_rec *, struct log_entry_info_t *);
-    const char * format;
+    const char *param;
     apr_table_t  *options;
 } log_entry_info_t;
 
@@ -53,17 +53,6 @@ static void msgpack_pack_key_string(msgpack_packer* p, const char* key, const ch
 {
     msgpack_pack_string(p, key);
     msgpack_pack_string(p, value);
-}
-
-//Return the request time as an ISO8601 string
-static const char *format_request_time(request_rec *r)
-{
-    apr_time_exp_t xt;
-    ap_explode_recent_localtime(&xt, r->request_time);
-    apr_size_t retcode;
-    char tstr[MAX_STRING_LEN];
-    apr_strftime(tstr, &retcode, sizeof(tstr), "%Y-%m-%dT%H:%M:%S%z", &xt);
-    return apr_pstrdup(r->pool, tstr);
 }
 
 static void find_multiple_headers(msgpack_packer* packer, apr_pool_t *pool,
@@ -135,15 +124,8 @@ static void log_bytes_sent(msgpack_packer* packer, request_rec *r, log_entry_inf
 //%...{FOOBAR}C:  The contents of the HTTP cookie FOOBAR
 static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->val;
+    const char *a = info->param;
+
     if (a == NULL) {
         msgpack_pack_nil(packer);
         return;
@@ -194,15 +176,8 @@ static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t*
 //%...{FOOBAR}e:  The contents of the environment variable FOOBAR
 static void log_env_var(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->val;
+    const char *a = info->param;
+
     if (a == NULL) {
         msgpack_pack_nil(packer);
         return;
@@ -242,17 +217,8 @@ static void log_local_address(msgpack_packer* packer, request_rec *r, log_entry_
 //%...{Foobar}i:  The contents of Foobar: header line(s) in the request sent to the client.
 static void log_header_in(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    fprintf(stderr, "output header");
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->key;
-    fprintf(stderr, "%s", a);
+    const char *a = info->param;
+
     if (a == NULL) {
         msgpack_pack_nil(packer);
         return;
@@ -278,15 +244,8 @@ static void log_remote_logname(msgpack_packer* packer, request_rec *r, log_entry
 //%...{Foobar}n:  The contents of note "Foobar" from another module.
 static void log_note(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->val;
+    const char *a = info->param;
+
     if (a == NULL) {
         msgpack_pack_nil(packer);
         return;
@@ -297,15 +256,8 @@ static void log_note(msgpack_packer* packer, request_rec *r, log_entry_info_t* i
 //%...{Foobar}o:  The contents of Foobar: header line(s) in the reply.
 static void log_header_out(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->val;
+    const char *a = info->param;
+
     if (a == NULL) {
         msgpack_pack_nil(packer);
         return;
@@ -330,15 +282,8 @@ static void log_header_out(msgpack_packer* packer, request_rec *r, log_entry_inf
 //%...{format}p: the canonical port for the server, or the actual local or remote port
 static void log_server_port(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->val;
+    const char *a = info->param;
+
     if (a == NULL) {
         msgpack_pack_nil(packer);
         return;
@@ -366,22 +311,10 @@ static void log_server_port(msgpack_packer* packer, request_rec *r, log_entry_in
 //%...{format}P: the process ID or thread ID of the child/thread that serviced the request
 static void log_pid_tid(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    const apr_array_header_t *elts = apr_table_elts(info->options);
-    
-    if (elts->nelts == 0) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    
-    const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
-    char *a = t_elt->val;
-    if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
-    }
+    const char *a = info->param;
 
     const char * pid_tid = NULL;
-    if (*a == '\0' || !strcasecmp(a, "pid")) {
+    if (a == NULL || *a == '\0' || !strcasecmp(a, "pid")) {
         pid_tid = ap_append_pid(r->pool, "", "");
     }
     else if (!strcasecmp(a, "tid") || !strcasecmp(a, "hextid")) {
@@ -411,28 +344,35 @@ static void log_status(msgpack_packer* packer, request_rec *r, log_entry_info_t*
 
 //%...t:  time, in common log format time format
 //%...{format}t:  The time, in the form given by format, which should be in strftime(3) format.
-static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
     apr_time_exp_t xt;
     ap_explode_recent_localtime(&xt, r->request_time);
     apr_size_t retcode;
-    char formatstr[MAX_STRING_LEN];
-    //Prepare the format with a usec value, strftime don't know usec;
-    snprintf(formatstr, MAX_STRING_LEN, "%s.%06d%s", "%Y-%m-%dT%H:%M:%S", xt.tm_usec, "%z");
+    const char *format = NULL;
+    if(info != NULL) {
+        format = apr_table_get(info->options, "format");
+    }
     char tstr[MAX_STRING_LEN];
-    apr_strftime(tstr, &retcode, sizeof(tstr), formatstr, &xt);
+    if(format == NULL) {
+        char formatstr[MAX_STRING_LEN];
+        //Prepare the format with a usec value, strftime don't know usec;
+        snprintf(formatstr, MAX_STRING_LEN, "%s.%06d%s", "%Y-%m-%dT%H:%M:%S", xt.tm_usec, "%z");
+        format = formatstr;
+    }
+    apr_strftime(tstr, &retcode, sizeof(tstr), format, &xt);
     msgpack_pack_string(packer, apr_pstrdup(r->pool, tstr));
 }
 
 //%...T:  the time taken to serve the request, in seconds.
-static void log_request_duration(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static void log_request_duration(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
     apr_time_t duration = apr_time_now() - r->request_time;
     msgpack_pack_long(packer, apr_time_sec(duration));
 }
 
 //%...D:  the time taken to serve the request, in micro seconds.
-static void log_request_duration_microseconds(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static void log_request_duration_microseconds(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
     msgpack_pack_long(packer, apr_time_now() - r->request_time);
 }
@@ -536,7 +476,7 @@ static const char *set_log_server_port(cmd_parms *cmd, void *cfg, const char *ar
     return NULL;
 }
 
-static void resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
+static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     
     if(strcasecmp(entry_name, "request_time") == 0) {
         entry_info->pack_entry = log_request_time;
@@ -621,8 +561,10 @@ static void resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     }
     else if(strcasecmp(entry_name, "connection_status") == 0) {
         entry_info->pack_entry = log_connection_status;
+    } else {
+        return false;
     }
-    
+    return true;
 }
 
 static const char *
@@ -637,8 +579,10 @@ add_log_entries(cmd_parms *cmd, void *dummy, const char *arg)
         entry_info->options = apr_table_make(cmd->pool, 0);
 
         char *entry_name = ap_getword_conf(cmd->pool, &arg);
-        resolve_pack(entry_info, entry_name);
-        fprintf(stderr, "%s: %s\n", arg, entry_name);
+        if(! resolve_pack(entry_info, entry_name)) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
+                         "log_net: unknown log entry %s", entry_name);
+        }
         
         apr_table_setn(config.entries, entry_name, (const char *)entry_info);
     }
@@ -655,21 +599,33 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
     entry_info->options = apr_table_make(cmd->pool, 1);
     
     char *entry_name = ap_getword_conf(cmd->pool, &arg);
+    if(entry_name == NULL) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
+                     "log_net: empty log entry");
+        return NULL;
+    }
     
-    resolve_pack(entry_info, entry_name);
+    if(! resolve_pack(entry_info, entry_name)) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
+                     "log_net: unknow log entry %s", entry_name);
+        return NULL;
+    }
     
+    bool first = true;
     while (*arg) {
         char *word = ap_getword_conf(cmd->pool, &arg);
         char *val = strchr(word, '=');
+        if(first && val == NULL) {
+            entry_info->param = word;
+            first = false;
+            continue;
+        }
         if (val != NULL) {
             *val++ = '\0';
         }
         // If the option is 'name', it overrides the name
         if(strcasecmp(word, "name") == 0) {
             entry_name = val;
-        //Option is a format instruction
-        } else  if(strcasecmp(word, "format") == 0) {
-            entry_info->format = val;
         } else {
             apr_table_setn(entry_info->options, word, val);
         }
@@ -677,49 +633,6 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
     apr_table_setn(config.entries, entry_name, (const char *)entry_info);
     return NULL;
 }
-
-static const char *get_cookie(request_rec *r, const char *cookie_name)
-{
-    const char *cookies_entry;
-
-    /*
-     * This supports Netscape version 0 cookies while being tolerant to
-     * some properties of RFC2109/2965 version 1 cookies:
-     * - case-insensitive match of cookie names
-     * - white space between the tokens
-     * It does not support the following version 1 features:
-     * - quoted strings as cookie values
-     * - commas to separate cookies
-     */
-
-    if ((cookies_entry = apr_table_get(r->headers_in, "Cookie"))) {
-        char *cookie, *last1, *last2;
-        char *cookies = apr_pstrdup(r->pool, cookies_entry);
-
-        while ((cookie = apr_strtok(cookies, ";", &last1))) {
-            char *name = apr_strtok(cookie, "=", &last2);
-            if (name) {
-                char *value = name + strlen(name) + 1;
-                apr_collapse_spaces(name, name);
-
-                if (!strcasecmp(name, cookie_name)) {
-                    char *last;
-                    value += strspn(value, " \t");  /* Move past leading WS */
-                    last = value + strlen(value) - 1;
-                    while (last >= value && apr_isspace(*last)) {
-                       *last = '\0';
-                       --last;
-                    }
-
-                    return value;
-                }
-            }
-            cookies = NULL;
-        }
-    }
-    return NULL;
-}
-
 
 static size_t make_msgpack(request_rec *r, void **message)
 {
@@ -763,17 +676,16 @@ static size_t make_msgpack(request_rec *r, void **message)
 
 static apr_status_t send_msg_udp(void *message, apr_size_t msg_size, request_rec *r)
 {
-    apr_status_t rv;
     if(server_addr == NULL || udp_socket == NULL) {
-         ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
-                     "log_net: unable to send log message");
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
+                      "log_net: unable to send log message");
         return APR_SUCCESS;
     }
     
+    apr_status_t rv;
     if ((rv = apr_socket_sendto(udp_socket, server_addr, 0, message, &msg_size)) != APR_SUCCESS) {
-         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
-                     "log_net: send log message failed");
-        return rv;
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                      "log_net: send log message failed");
     }
 
     return APR_SUCCESS;
