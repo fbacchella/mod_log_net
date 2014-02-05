@@ -64,7 +64,8 @@ The logged information are copied from mod_log_config. Generaly any logged value
  * `request_protocol`: The request protocol. Same as %H.
  * `request_query`: The query string. Same as %q, but without the '?'.
  * `connection_status`:  Status of the connection. Same as %X.
- 
+ * `hostname`:  the real server name as read by apr_gethostname.
+
 Msgpack is a typed format, so when is non existent, a null value will be returned, instead of '-' as in mod_log_config.
 
 Simple entries can be added with LognetEntries:
@@ -79,6 +80,8 @@ For entries that need options, uses LognetEntry:
 A common option is name=`name` that can be used to change a field name in the message. For example
 
     LognetEntry request_uri name=uri
+
+For string value, the option format=`format_string` can be used, it will be used with sprintf. The format string must contains one and only one occurence of %s that will be substituted by the value. 
 
 # Using it with logstash
 
