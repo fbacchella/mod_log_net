@@ -13,6 +13,7 @@ Load it with `LoadModule log_net_module .../mod_log_net.so`
 
  * `LognetHost` Hostname of the log server
  * `LognetPort` Port for the log server
+ * `LognetEncoding` Encoding for output string, default to 'UTF-8'
  * `LognetEntries` Add many log entries, without options
  * `LognetEntry` Add a log entry, with options
 

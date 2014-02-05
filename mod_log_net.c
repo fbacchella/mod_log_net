@@ -30,6 +30,7 @@ typedef struct log_entry_info_t {
 typedef struct {
     const char   *host;
     apr_port_t    port;
+    const char   *encoding;
     apr_table_t  *entries;
 } log_net_config_t;
 
@@ -61,7 +62,7 @@ static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_
         if(src_encoding == NULL) {
             src_encoding = "ASCII";
         }
-        iconv_t converter = iconv_open("UTF-8", src_encoding);
+        iconv_t converter = iconv_open(config.encoding, src_encoding);
         size_t inbytesleft = strlen(buffer);
         size_t outbytesleft = inbytesleft * 3;
         char *converted = calloc(outbytesleft + 1, sizeof(char));
@@ -73,7 +74,7 @@ static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_
                                           &cursorin, &inbytesleft,
                                           &cursorout, &outbytesleft);
             
-            if (errno == EILSEQ || errno == EINVAL) {
+            if (done_converted == -1 && (errno == EILSEQ || errno == EINVAL)) {
                 cursorin++;
                 inbytesleft--;
                 *cursorout++ = '?';
@@ -414,7 +415,7 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
     }
     char tstr[MAX_STRING_LEN + 1];
     apr_strftime(tstr, &retcode, MAX_STRING_LEN, format, &xt);
-    msgpack_pack_data_string(packer, tstr, info);
+    msgpack_pack_string(packer, tstr);
 }
 
 //%...T:  the time taken to serve the request, in seconds.
@@ -534,6 +535,12 @@ static const char *set_log_server_host(cmd_parms *cmd, void *cfg, const char *ar
 static const char *set_log_server_port(cmd_parms *cmd, void *cfg, const char *arg)
 {
     config.port = atoi(arg);
+    return NULL;
+}
+
+static const char *set_log_encoding(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    config.encoding = arg;
     return NULL;
 }
 
@@ -786,10 +793,16 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
 
 }
 
+static int init_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp){
+    config.encoding = "UTF-8";
+    return OK;
+}
+
 static const command_rec log_net_directives[] =
 {
     AP_INIT_TAKE1("LognetHost", set_log_server_host, NULL, RSRC_CONF, "Hostname of the log server"),
     AP_INIT_TAKE1("LognetPort", set_log_server_port, NULL, RSRC_CONF, "Port for the log server"),
+    AP_INIT_TAKE1("LognetEncoding", set_log_encoding, NULL, RSRC_CONF, "Encoding for output string"),
     AP_INIT_RAW_ARGS("LognetEntry", add_log_entry, NULL, RSRC_CONF, "Add a log entry"),
     AP_INIT_RAW_ARGS("LognetEntries", add_log_entries, NULL, RSRC_CONF, "Add many log entries"),
     { NULL }
@@ -798,6 +811,7 @@ static const command_rec log_net_directives[] =
 static void register_hooks(apr_pool_t *p)
 {
     ap_hook_log_transaction(send_udp_msgpack, NULL , NULL, APR_HOOK_MIDDLE);
+    ap_hook_pre_config(init_config, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_post_config(init_udp_socket, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
