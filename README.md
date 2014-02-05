@@ -77,11 +77,11 @@ For entries that need options, uses LognetEntry:
     LognetEntry header_in Host
     LognetEntry cookie id
 
-A common option is name=`name` that can be used to change a field name in the message. For example
+# Options
 
-    LognetEntry request_uri name=uri
-
-For string value, the option format=`format_string` can be used, it will be used with sprintf. The format string must contains one and only one occurence of %s that will be substituted by the value. 
+ * `name`: it can be used to override the value name
+ * `format`: the value will be formatted according to format, using printf rules. The format string must contains one and only one occurence of %s that will be substituted by the value.
+ * `encoding`: the value is converted using iconv, the default encoding used is ASCII. Invalid characters are replaced with a '?'.
 
 # Using it with logstash
 

@@ -13,6 +13,10 @@
 #include "util_time.h"
 #include "apr_lib.h"
 
+#include <errno.h>
+
+#include <iconv.h>
+
 #include <msgpack.h>
 
 module AP_MODULE_DECLARE_DATA log_net_module;
@@ -37,12 +41,59 @@ static apr_sockaddr_t *server_addr;
  * Resolver helpers
  */
 
-static void msgpack_pack_string(msgpack_packer* p, const char* buffer, log_entry_info_t *info)
+static void msgpack_pack_string(msgpack_packer* p, const char* buffer)
+{
+    size_t len = strlen(buffer);
+    msgpack_pack_raw(p, len);
+    msgpack_pack_raw_body(p, buffer, len);
+}
+
+static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_entry_info_t *info)
 {
     if(buffer == NULL) {
         msgpack_pack_nil(p);
     }
     else {
+        const char *src_encoding = NULL;
+        if(info != NULL) {
+            src_encoding = apr_table_get(info->options, "encoding");
+        }
+        if(src_encoding == NULL) {
+            src_encoding = "ASCII";
+        }
+        iconv_t converter = iconv_open("UTF-8", src_encoding);
+        size_t inbytesleft = strlen(buffer);
+        size_t outbytesleft = inbytesleft * 3;
+        char *converted = calloc(outbytesleft + 1, sizeof(char));
+        char *cursorout = converted;
+        char *cursorin = (char *) buffer;
+        size_t done_converted = 0;
+        do {
+            done_converted = iconv(converter,
+                                          &cursorin, &inbytesleft,
+                                          &cursorout, &outbytesleft);
+            
+            if (errno == EILSEQ || errno == EINVAL) {
+                cursorin++;
+                inbytesleft--;
+                *cursorout++ = '?';
+                outbytesleft--;
+            }
+            else {
+                break;
+            }
+        } while(done_converted == -1);
+        iconv_close(converter);
+
+        if(done_converted == -1) {
+            msgpack_pack_nil(p);
+            return;
+        }
+        buffer = converted;
+        if(done_converted == -1){
+            msgpack_pack_nil(p);
+            return;
+        }
         const char *format;
         if(info != NULL && (format = apr_table_get(info->options, "format"))) {
             char pack_buffer[MAX_STRING_LEN];
@@ -52,6 +103,7 @@ static void msgpack_pack_string(msgpack_packer* p, const char* buffer, log_entry
         size_t len = strlen(buffer);
         msgpack_pack_raw(p, len);
         msgpack_pack_raw_body(p, buffer, len);
+        free(converted);
     }
 }
 
@@ -99,7 +151,7 @@ static void find_multiple_headers(msgpack_packer* packer, apr_pool_t *pool,
         msgpack_pack_array(packer, count);
         rp = result_list;
         while (rp) {
-            msgpack_pack_string(packer, rp->value, NULL);
+            msgpack_pack_data_string(packer, rp->value, NULL);
             rp = rp->next;
         }
     }
@@ -161,7 +213,7 @@ static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t 
                         *last = '\0';
                         --last;
                     }
-                    msgpack_pack_string(packer, value, info);
+                    msgpack_pack_data_string(packer, value, info);
                     packed = true;
                 }
             }
@@ -184,19 +236,19 @@ static void log_env_var(msgpack_packer* packer, request_rec *r, log_entry_info_t
     }
 
     const char *value = apr_table_get(r->subprocess_env, a);
-    msgpack_pack_string(packer, value, info);
+    msgpack_pack_data_string(packer, value, info);
 }
 
 //%...f:  filename
 static void log_request_file(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_string(packer, r->filename, info);
+    msgpack_pack_data_string(packer, r->filename, info);
 }
 
 //%...h:  remote host
 static void log_remote_host(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_string(packer,
+    msgpack_pack_data_string(packer,
                         ap_get_remote_host(r->connection,
                                            r->per_dir_config,
                                            REMOTE_NAME, NULL),
@@ -206,13 +258,13 @@ static void log_remote_host(msgpack_packer* packer, request_rec *r, log_entry_in
 //%...a:  remote IP-address
 static void log_remote_address(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_string(packer, r->connection->remote_ip, info);
+    msgpack_pack_data_string(packer, r->connection->remote_ip, info);
 }
 
 //%...A:  local IP-address
 static void log_local_address(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_string(packer, r->connection->local_ip, info);
+    msgpack_pack_data_string(packer, r->connection->local_ip, info);
 }
 
 //%...{Foobar}i:  The contents of Foobar: header line(s) in the request sent to the client.
@@ -226,7 +278,7 @@ static void log_header_in(msgpack_packer* packer, request_rec *r, log_entry_info
     }
 
     const char *header = apr_table_get(r->headers_in, a);
-    msgpack_pack_string(packer, header, info);
+    msgpack_pack_data_string(packer, header, info);
 }
 
 //%...k:  number of keepalive requests served over this connection
@@ -239,7 +291,7 @@ static void log_requests_on_connection(msgpack_packer* packer, request_rec *r, l
 //%...l:  remote logname (from identd, if supplied)
 static void log_remote_logname(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_string(packer, ap_get_remote_logname(r), info);
+    msgpack_pack_data_string(packer, ap_get_remote_logname(r), info);
 }
 
 //%...{Foobar}n:  The contents of note "Foobar" from another module.
@@ -251,7 +303,7 @@ static void log_note(msgpack_packer* packer, request_rec *r, log_entry_info_t *i
         msgpack_pack_nil(packer);
         return;
     }
-    msgpack_pack_string(packer, apr_table_get(r->notes, a), info);
+    msgpack_pack_data_string(packer, apr_table_get(r->notes, a), info);
 }
 
 //%...{Foobar}o:  The contents of Foobar: header line(s) in the reply.
@@ -267,14 +319,14 @@ static void log_header_out(msgpack_packer* packer, request_rec *r, log_entry_inf
     
     if (!strcasecmp(a, "Content-type") && r->content_type) {
         cp = ap_field_noparam(r->pool, r->content_type);
-        msgpack_pack_string(packer, cp, info);
+        msgpack_pack_data_string(packer, cp, info);
     }
     else if (!strcasecmp(a, "Set-Cookie")) {
         find_multiple_headers(packer, r->pool, r->headers_out, a);
     }
     else {
         cp = apr_table_get(r->headers_out, a);
-        msgpack_pack_string(packer, cp, info);
+        msgpack_pack_data_string(packer, cp, info);
     }
     
 }
@@ -334,7 +386,7 @@ static void log_pid_tid(msgpack_packer* packer, request_rec *r, log_entry_info_t
 #endif
                                 &tid);
     }
-    msgpack_pack_string(packer, pid_tid, info);
+    msgpack_pack_data_string(packer, pid_tid, info);
 }
 
 //%...s:  status.  For requests that got internally redirected, this is status of the *original* request --- %...>s for the last.
@@ -354,15 +406,15 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
     if(info != NULL) {
         format = apr_table_get(info->options, "format");
     }
+    char formatstr[MAX_STRING_LEN + 1];
     if(format == NULL) {
-        char formatstr[MAX_STRING_LEN];
         //Prepare the format with a usec value, strftime don't know usec;
         snprintf(formatstr, MAX_STRING_LEN, "%s.%06d%s", "%Y-%m-%dT%H:%M:%S", xt.tm_usec, "%z");
         format = formatstr;
     }
-    char tstr[MAX_STRING_LEN];
-    apr_strftime(tstr, &retcode, sizeof(tstr), format, &xt);
-    msgpack_pack_string(packer, tstr, info);
+    char tstr[MAX_STRING_LEN + 1];
+    apr_strftime(tstr, &retcode, MAX_STRING_LEN, format, &xt);
+    msgpack_pack_data_string(packer, tstr, info);
 }
 
 //%...T:  the time taken to serve the request, in seconds.
@@ -387,7 +439,7 @@ static void log_remote_user(msgpack_packer* packer, request_rec *r, log_entry_in
         msgpack_pack_nil(packer);
     }
     else {
-        msgpack_pack_string(packer, rvalue, info);
+        msgpack_pack_data_string(packer, rvalue, info);
     }
     
 }
@@ -395,7 +447,7 @@ static void log_remote_user(msgpack_packer* packer, request_rec *r, log_entry_in
 //%...U:  the URL path requested.
 static void log_request_uri(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_string(packer, r->uri, info);
+    msgpack_pack_data_string(packer, r->uri, info);
 }
 
 //%...v:  the configured name of the server (i.e. which virtual host?)
@@ -404,7 +456,7 @@ static void log_request_uri(msgpack_packer* packer, request_rec *r, log_entry_in
  */
 static void log_virtual_host(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_string(packer, r->server->server_hostname, info);
+    msgpack_pack_data_string(packer, r->server->server_hostname, info);
 }
 
 //%...V:  the server name according to the UseCanonicalName setting
@@ -413,26 +465,26 @@ static void log_virtual_host(msgpack_packer* packer, request_rec *r, log_entry_i
  */
 static void log_server_name(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_string(packer, ap_get_server_name(r), info);
+    msgpack_pack_data_string(packer, ap_get_server_name(r), info);
 }
 
 //%...m:  the request method
 static void log_request_method(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_string(packer, r->method, info);
+    msgpack_pack_data_string(packer, r->method, info);
 }
 
 //%...H:  the request protocol
 static void log_request_protocol(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_string(packer, r->protocol, info);
+    msgpack_pack_data_string(packer, r->protocol, info);
 }
 
 //%...q:  the query string prepended by "?", or empty if no query string
 static void log_request_query(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
     if (r->args) {
-        msgpack_pack_string(packer, r->args, info);
+        msgpack_pack_data_string(packer, r->args, info);
     } else {
         msgpack_pack_nil(packer);
     }
@@ -458,7 +510,7 @@ static void log_connection_status(msgpack_packer* packer, request_rec *r, log_en
     else {
         status = "-";
     }
-    msgpack_pack_string(packer, status, info);
+    msgpack_pack_data_string(packer, status, info);
 }
 
 //custom function
@@ -466,7 +518,7 @@ static void log_hostname(msgpack_packer* packer, request_rec *r, log_entry_info_
 {
     char hostname[APRMAXHOSTLEN + 1];
     apr_gethostname(hostname, APRMAXHOSTLEN, r->pool);
-    msgpack_pack_string(packer, hostname, info);
+    msgpack_pack_data_string(packer, hostname, info);
 }
 
 /*****
@@ -660,13 +712,13 @@ static size_t make_msgpack(request_rec *r, void **message)
     msgpack_pack_map(pk, 1 + elts->nelts);
 
     /* always log the request timestamp*/
-    msgpack_pack_string(pk, "@timestamp", NULL); log_request_time(pk, r, NULL);
+    msgpack_pack_string(pk, "@timestamp"); log_request_time(pk, r, NULL);
     
     do {
         char *log_entry_name = (char *)t_elt->key;
         log_entry_info_t *log_entry_info = (log_entry_info_t *)t_elt->val;
         if(log_entry_info->pack_entry != NULL) {
-            msgpack_pack_string(pk, log_entry_name, NULL);
+            msgpack_pack_string(pk, log_entry_name);
             log_entry_info->pack_entry(pk, r, log_entry_info);
         }
         ++t_elt;

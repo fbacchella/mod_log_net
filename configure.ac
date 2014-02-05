@@ -8,8 +8,8 @@ AC_CONFIG_SRCDIR([mod_log_net.c])
 # Checks for programs.
 AC_PROG_CC
 
+
 #### Locate APXS
-## First, check --with-apxs
 AC_MSG_NOTICE([Locating apxs])
 AC_MSG_CHECKING([for --with-apxs])
 AC_ARG_WITH(
@@ -35,8 +35,25 @@ else
         AC_MSG_FAILURE([apxs not found])
 fi
 
-#### Done locating APXS
+#### Locate iconv
+AC_ARG_WITH(iconv,
+  AS_HELP_STRING([--with-iconv=DIR], [iconv base directory]),
+  [iconv="$withval"
+   CPPFLAGS="$CPPFLAGS -I$withval/include"
+   LDFLAGS="$LDFLAGS -L$withval/lib"]
+)
 
+AC_CHECK_HEADERS([iconv.h],[],[AC_MSG_FAILURE([iconv headers required])])
+
+AC_CHECK_FUNC(iconv_open,
+    [],
+    [AC_CHECK_LIB(iconv, iconv_open,
+      [LIBS="$LIBS -liconv"],
+      [AC_MSG_ERROR("iconv library not found."); true]
+      )]
+)
+
+#### Locate msgpack
 AC_ARG_WITH(msgpack,
   AS_HELP_STRING([--with-msgpack=DIR], [msgpack base directory]),
   [msgpack="$withval"
@@ -47,7 +64,7 @@ AC_ARG_WITH(msgpack,
 AC_CHECK_HEADERS([msgpack.h],[],[AC_MSG_FAILURE([msgpack headers required])])
 
 AC_CHECK_LIB(msgpack, msgpack_version,
-  [LIBS="$LIBS -lmsgpack"],
+  ,
   [AC_MSG_ERROR("msgpack library not found."); break]
 )
 

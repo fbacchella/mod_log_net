@@ -677,6 +677,7 @@ ac_subst_files=''
 ac_user_opts='
 enable_option_checking
 with_apxs
+with_iconv
 with_msgpack
 '
       ac_precious_vars='build_alias
@@ -1297,6 +1298,7 @@ Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
   --with-apxs             /absolute/path/to/apxs
+  --with-iconv=DIR        iconv base directory
   --with-msgpack=DIR      msgpack base directory
 
 Some influential environment variables:
@@ -2885,8 +2887,8 @@ ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $
 ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
+
 #### Locate APXS
-## First, check --with-apxs
 { $as_echo "$as_me:${as_lineno-$LINENO}: Locating apxs" >&5
 $as_echo "$as_me: Locating apxs" >&6;}
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for --with-apxs" >&5
@@ -2966,12 +2968,11 @@ as_fn_error $? "apxs not found
 See \`config.log' for more details" "$LINENO" 5; }
 fi
 
-#### Done locating APXS
+#### Locate iconv
 
-
-# Check whether --with-msgpack was given.
-if test "${with_msgpack+set}" = set; then :
-  withval=$with_msgpack; msgpack="$withval"
+# Check whether --with-iconv was given.
+if test "${with_iconv+set}" = set; then :
+  withval=$with_iconv; iconv="$withval"
    CPPFLAGS="$CPPFLAGS -I$withval/include"
    LDFLAGS="$LDFLAGS -L$withval/lib"
 
@@ -3376,6 +3377,86 @@ fi
 done
 
 
+for ac_header in iconv.h
+do :
+  ac_fn_c_check_header_mongrel "$LINENO" "iconv.h" "ac_cv_header_iconv_h" "$ac_includes_default"
+if test "x$ac_cv_header_iconv_h" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_ICONV_H 1
+_ACEOF
+
+else
+  { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error $? "iconv headers required
+See \`config.log' for more details" "$LINENO" 5; }
+fi
+
+done
+
+
+ac_fn_c_check_func "$LINENO" "iconv_open" "ac_cv_func_iconv_open"
+if test "x$ac_cv_func_iconv_open" = xyes; then :
+
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for iconv_open in -liconv" >&5
+$as_echo_n "checking for iconv_open in -liconv... " >&6; }
+if ${ac_cv_lib_iconv_iconv_open+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-liconv  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char iconv_open ();
+int
+main ()
+{
+return iconv_open ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_iconv_iconv_open=yes
+else
+  ac_cv_lib_iconv_iconv_open=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_iconv_iconv_open" >&5
+$as_echo "$ac_cv_lib_iconv_iconv_open" >&6; }
+if test "x$ac_cv_lib_iconv_iconv_open" = xyes; then :
+  LIBS="$LIBS -liconv"
+else
+  as_fn_error $? "\"iconv library not found.\"" "$LINENO" 5; true
+
+fi
+
+
+fi
+
+
+#### Locate msgpack
+
+# Check whether --with-msgpack was given.
+if test "${with_msgpack+set}" = set; then :
+  withval=$with_msgpack; msgpack="$withval"
+   CPPFLAGS="$CPPFLAGS -I$withval/include"
+   LDFLAGS="$LDFLAGS -L$withval/lib"
+
+fi
+
+
 for ac_header in msgpack.h
 do :
   ac_fn_c_check_header_mongrel "$LINENO" "msgpack.h" "ac_cv_header_msgpack_h" "$ac_includes_default"
@@ -3431,7 +3512,12 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_msgpack_msgpack_version" >&5
 $as_echo "$ac_cv_lib_msgpack_msgpack_version" >&6; }
 if test "x$ac_cv_lib_msgpack_msgpack_version" = xyes; then :
-  LIBS="$LIBS -lmsgpack"
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBMSGPACK 1
+_ACEOF
+
+  LIBS="-lmsgpack $LIBS"
+
 else
   as_fn_error $? "\"msgpack library not found.\"" "$LINENO" 5; break
 
