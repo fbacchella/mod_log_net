@@ -31,6 +31,8 @@ This a server level configuration.
 
 # Installation
 
+The module needs msgpack-c and libiconv.
+
     ./configure --with-msgpack=/opt/local
     make
     make install
