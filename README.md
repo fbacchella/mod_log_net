@@ -13,7 +13,7 @@ Load it with `LoadModule log_net_module .../mod_log_net.so`
 
  * `LognetHost` Hostname of the log server
  * `LognetPort` Port for the log server
- * `LognetEncoding` Encoding for output string, default to 'UTF-8'
+ * `LognetEncoding` Encoding for output string, default to 'UTF-8'. Any valid value for libiconv can be given.
  * `LognetEntries` Add many log entries, without options
  * `LognetEntry` Add a log entry, with options
 
@@ -84,7 +84,7 @@ For entries that need options, uses LognetEntry:
 
  * `name`: it can be used to override the value name
  * `format`: the value will be formatted according to format, using printf rules. The format string must contains one and only one occurence of %s that will be substituted by the value.
- * `encoding`: the value is converted using iconv, the default encoding used is ASCII. Invalid characters are replaced with a '?'.
+ * `encoding`: The input encoding for this value, the output encoding is the one given in the `LognetEncoding` configuration. The default value is ASCII. Invalid characters are replaced with a '?'.
 
 # Using it with logstash
 
