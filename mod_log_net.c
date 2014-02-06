@@ -747,11 +747,6 @@ static size_t make_msgpack(request_rec *r, void **message)
 
 static apr_status_t send_msg_udp(void *message, apr_size_t msg_size, request_rec *r)
 {
-    if(server_addr == NULL || udp_socket == NULL) {
-        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
-                      "log_net: unable to send log message");
-        return APR_SUCCESS;
-    }
     
     apr_status_t rv;
     if ((rv = apr_socket_sendto(udp_socket, server_addr, 0, message, &msg_size)) != APR_SUCCESS) {
@@ -764,6 +759,10 @@ static apr_status_t send_msg_udp(void *message, apr_size_t msg_size, request_rec
 
 static apr_status_t send_udp_msgpack(request_rec *r)
 {
+    if(server_addr == NULL || udp_socket == NULL) {
+        return APR_SUCCESS;
+    }
+    
     void *message;
     size_t msg_size = make_msgpack(r, &message);
     if (msg_size > 0) {
@@ -774,6 +773,15 @@ static apr_status_t send_udp_msgpack(request_rec *r)
 
 static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s)
 {
+    //Nothing configured, failed silently
+    if(config.host == NULL && config.port == 0) {
+        return OK;
+    }
+    if(config.host == NULL || config.port == 0) {
+        ap_log_error(APLOG_MARK, APLOG_ALERT, 0, s,
+                     "log_net: network configuration incomplete");
+        return !OK;
+    }
     apr_status_t rv;
     server_addr = NULL;
     udp_socket = NULL;
@@ -794,7 +802,9 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
 }
 
 static int init_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp){
+    bzero(&config, sizeof((config)));
     config.encoding = "UTF-8";
+
     return OK;
 }
 
