@@ -1,0 +1,5 @@
+libapache-mod-log-net (0.0.1) unstable; urgency=low
+
+  * Initial release
+
+ -- Christian Simon <simon@swine.de>  Tue, 25 Feb 2014 22:06:27 +0100
