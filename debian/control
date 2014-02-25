@@ -1,0 +1,11 @@
+Source: libapache-mod-log-net
+Section: net
+Priority: optional
+Maintainer: Christian Simon <simon@swine.de>
+Build-Depends: debhelper (>= 4), libmsgpack-dev, apache2-dev (>= 2.2), dh-apache2, quilt
+Standards-Version: 3.9.3
+
+Package: libapache2-mod-log-net
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description:  apache2 module for logging msgpack-udp
