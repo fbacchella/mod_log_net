@@ -259,7 +259,11 @@ static void log_remote_host(msgpack_packer* packer, request_rec *r, log_entry_in
 //%...a:  remote IP-address
 static void log_remote_address(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    msgpack_pack_data_string(packer, r->connection->client_ip, info);
+#else
     msgpack_pack_data_string(packer, r->connection->remote_ip, info);
+#endif
 }
 
 //%...A:  local IP-address
@@ -348,7 +352,11 @@ static void log_server_port(msgpack_packer* packer, request_rec *r, log_entry_in
         port = r->server->port ? r->server->port : ap_default_port(r);
     }
     else if (strcasecmp(a, "remote") == 0) {
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+        port = r->connection->client_addr->port;
+#else
         port = r->connection->remote_addr->port;
+#endif
     }
     else if (strcasecmp(a, "local") == 0) {
         port = r->connection->local_addr->port;
