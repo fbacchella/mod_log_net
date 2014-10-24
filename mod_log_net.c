@@ -25,6 +25,7 @@ typedef struct log_entry_info_t {
     void (*pack_entry)(msgpack_packer*, request_rec *, struct log_entry_info_t *);
     const char *param;
     apr_table_t  *options;
+    int final;
 } log_entry_info_t;
 
 typedef struct {
@@ -604,18 +605,22 @@ static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     }
     else if(strcasecmp(entry_name, "status") == 0) {
         entry_info->pack_entry = log_status;
+        entry_info->final = FALSE;
     }
     else if(strcasecmp(entry_name, "request_time") == 0) {
         entry_info->pack_entry = log_request_time;
     }
     else if(strcasecmp(entry_name, "request_duration") == 0) {
         entry_info->pack_entry = log_request_duration;
+        entry_info->final = FALSE;
     }
     else if(strcasecmp(entry_name, "request_duration_microseconds") == 0) {
         entry_info->pack_entry = log_request_duration_microseconds;
+        entry_info->final = FALSE;
     }
     else if(strcasecmp(entry_name, "remote_user") == 0) {
         entry_info->pack_entry = log_remote_user;
+        entry_info->final = FALSE;
     }
     else if(strcasecmp(entry_name, "request_uri") == 0) {
         entry_info->pack_entry = log_request_uri;
@@ -676,6 +681,7 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
     }
     log_entry_info_t *entry_info = apr_pcalloc(cmd->pool, sizeof(log_entry_info_t));
     entry_info->options = apr_table_make(cmd->pool, 1);
+    entry_info->final = TRUE;
     
     char *entry_name = ap_getword_conf(cmd->pool, &arg);
     if(entry_name == NULL) {
@@ -705,6 +711,16 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
         // If the option is 'name', it overrides the name
         if(strcasecmp(word, "name") == 0) {
             entry_name = val;
+        } else if (strcasecmp(word, "request") == 0) {
+            if(strcasecmp(val, "final") == 0) {
+                entry_info->final = 1;
+            } else if(strcasecmp(val, "original") == 0) {
+                entry_info->final = 0;
+            } else {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
+                             "log_net: unknow request choice %s for %s", val, entry_name);
+                
+            }
         } else {
             apr_table_setn(entry_info->options, word, val);
         }
@@ -725,6 +741,16 @@ static size_t make_msgpack(request_rec *r, void **message)
     const apr_table_entry_t *t_end = t_elt + elts->nelts;
     
     msgpack_pack_map(pk, 1 + elts->nelts);
+    
+    // Resolve the requeste original and final
+    request_rec *original_r = r;
+    while (original_r->prev) {
+        original_r = original_r->prev;
+    }
+    request_rec *final_r = r;
+    while (final_r->next) {
+        final_r = final_r->next;
+    }
 
     /* always log the request timestamp*/
     msgpack_pack_string(pk, "@timestamp"); log_request_time(pk, r, NULL);
@@ -734,7 +760,7 @@ static size_t make_msgpack(request_rec *r, void **message)
         log_entry_info_t *log_entry_info = (log_entry_info_t *)t_elt->val;
         if(log_entry_info->pack_entry != NULL) {
             msgpack_pack_string(pk, log_entry_name);
-            log_entry_info->pack_entry(pk, r, log_entry_info);
+            log_entry_info->pack_entry(pk, log_entry_info->final ? final_r : original_r, log_entry_info);
         }
         ++t_elt;
     } while (t_elt < t_end);

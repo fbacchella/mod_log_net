@@ -82,9 +82,10 @@ For entries that need options, uses LognetEntry:
 
 # Options
 
- * `name`: it can be used to override the value name
+ * `name`: it can be used to override the value name.
  * `format`: the value will be formatted according to format, using printf rules. The format string must contains one and only one occurence of %s that will be substituted by the value.
  * `encoding`: The input encoding for this value, the output encoding is the one given in the `LognetEncoding` configuration. The default value is ASCII. Invalid characters are replaced with a '?'.
+ * `request`: Does the informations are extracted from the original or final request when it has been internally redirected. It works like '<' and '>'. By default, the entry  `status`, `remote_user`, `request_duration`, `request_duration_microseconds` look at the original request while all others look at the final request. 
 
 # Using it with logstash
 
