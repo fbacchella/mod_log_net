@@ -661,6 +661,7 @@ add_log_entries(cmd_parms *cmd, void *dummy, const char *arg)
     while (*arg) {
         log_entry_info_t *entry_info = apr_pcalloc(cmd->pool, sizeof(log_entry_info_t));
         entry_info->options = apr_table_make(cmd->pool, 0);
+        entry_info->final = TRUE;
 
         char *entry_name = ap_getword_conf(cmd->pool, &arg);
         if(! resolve_pack(entry_info, entry_name)) {
@@ -713,9 +714,9 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
             entry_name = val;
         } else if (strcasecmp(word, "request") == 0) {
             if(strcasecmp(val, "final") == 0) {
-                entry_info->final = 1;
+                entry_info->final = TRUE;
             } else if(strcasecmp(val, "original") == 0) {
-                entry_info->final = 0;
+                entry_info->final = FALSE;
             } else {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
                              "log_net: unknow request choice %s for %s", val, entry_name);
