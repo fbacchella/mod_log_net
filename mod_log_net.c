@@ -46,8 +46,8 @@ static apr_sockaddr_t *server_addr;
 static void msgpack_pack_string(msgpack_packer* p, const char* buffer)
 {
     size_t len = strlen(buffer);
-    msgpack_pack_raw(p, len);
-    msgpack_pack_raw_body(p, buffer, len);
+    msgpack_pack_v4raw(p, len);
+    msgpack_pack_v4raw_body(p, buffer, len);
 }
 
 static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_entry_info_t *info, const request_rec *r)
@@ -109,8 +109,8 @@ static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_
             buffer = pack_buffer;
         }
         size_t len = strlen(buffer);
-        msgpack_pack_raw(p, len);
-        msgpack_pack_raw_body(p, buffer, len);
+        msgpack_pack_v4raw(p, len);
+        msgpack_pack_v4raw_body(p, buffer, len);
         free(converted);
     }
 }

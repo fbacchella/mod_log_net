@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.65])
-AC_INIT([mod_log_net], [0.1], [fbacchella@spamcop.net])
+AC_INIT([mod_log_net], [0.3], [fbacchella@spamcop.net])
 AC_CONFIG_SRCDIR([mod_log_net.c])
 
 # Checks for programs.
@@ -63,7 +63,7 @@ AC_ARG_WITH(msgpack,
 
 AC_CHECK_HEADERS([msgpack.h],[],[AC_MSG_FAILURE([msgpack headers required])])
 
-AC_CHECK_LIB(msgpack, msgpack_version,
+AC_CHECK_LIB(msgpackc, msgpack_version,
   ,
   [AC_MSG_ERROR("msgpack library not found."); break]
 )
