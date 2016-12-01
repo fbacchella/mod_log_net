@@ -46,8 +46,8 @@ static apr_sockaddr_t *server_addr;
 static void msgpack_pack_string(msgpack_packer* p, const char* buffer)
 {
     size_t len = strlen(buffer);
-    msgpack_pack_v4raw(p, len);
-    msgpack_pack_v4raw_body(p, buffer, len);
+    msgpack_pack_str(p, len);
+    msgpack_pack_str_body(p, buffer, len);
 }
 
 static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_entry_info_t *info, const request_rec *r)
@@ -56,62 +56,62 @@ static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_
         msgpack_pack_nil(p);
     }
     else {
-        const char *src_encoding = NULL;
+        char converted[MAX_STRING_LEN];
+        char formatted[MAX_STRING_LEN];
+        const char *send_buffer = buffer;
+        const char *dst_encoding = NULL;
         if(info != NULL) {
-            src_encoding = apr_table_get(info->options, "encoding");
+            dst_encoding = apr_table_get(info->options, "encoding");
         }
-        if(src_encoding == NULL) {
-            src_encoding = "ASCII";
+        if(dst_encoding == NULL) {
+            dst_encoding = "UTF-8";
         }
-        iconv_t converter = iconv_open(config.encoding, src_encoding);
-        if (converter == (iconv_t) -1) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, errno, r,
-                         "iconv: invalid conversion from %s to %s", config.encoding, src_encoding);
-            msgpack_pack_nil(p);
-            return;
-        }
-        size_t inbytesleft = strlen(buffer);
-        size_t outbytesleft = inbytesleft * 3;
-        char *converted = calloc(outbytesleft + 1, sizeof(char));
-        char *cursorout = converted;
-        char *cursorin = (char *) buffer;
-        size_t done_converted = 0;
-        do {
-            done_converted = iconv(converter,
-                                          &cursorin, &inbytesleft,
-                                          &cursorout, &outbytesleft);
+        // Don't convert if encoding are equals or converting from "real" ASCII (7 bits) to UTF-8
+        if (strcmp(config.encoding, dst_encoding) != 0 &&
+            !( strcmp(config.encoding, "ASCII") == 0  && strcmp(config.encoding, "UTF-8") == 0 )) {
+            iconv_t converter = iconv_open(config.encoding, dst_encoding);
+            if (converter == (iconv_t) -1) {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, errno, r,
+                              "iconv: invalid conversion from %s to %s", config.encoding, dst_encoding);
+                msgpack_pack_nil(p);
+                return;
+            }
+            size_t inbytesleft = strlen(buffer);
+            char *incursor = (char *) buffer;
+            size_t outbytesleft = MAX_STRING_LEN - 1;
+            char *outcursor = converted;
+            size_t done_converted = 0;
+            do {
+                done_converted = iconv(converter,
+                                       &incursor, &inbytesleft,
+                                       &outcursor, &outbytesleft);
+                
+                if (done_converted == -1 && (errno == EILSEQ || errno == EINVAL)) {
+                    incursor++;
+                    inbytesleft--;
+                    *outcursor++ = '?';
+                    outbytesleft--;
+                }
+            } while(done_converted != -1 && outbytesleft > 0 && inbytesleft > 0);
+            *outcursor = '\0';
+            iconv_close(converter);
             
-            if (done_converted == -1 && (errno == EILSEQ || errno == EINVAL)) {
-                cursorin++;
-                inbytesleft--;
-                *cursorout++ = '?';
-                outbytesleft--;
+            if(done_converted == -1) {
+                msgpack_pack_nil(p);
+                return;
+            } else {
+                
             }
-            else {
-                break;
-            }
-        } while(done_converted == -1);
-        iconv_close(converter);
-
-        if(done_converted == -1) {
-            msgpack_pack_nil(p);
-            return;
-        }
-        buffer = converted;
-        if(done_converted == -1){
-            msgpack_pack_nil(p);
-            return;
+            send_buffer = converted;
         }
         const char *format;
         if(info != NULL && (format = apr_table_get(info->options, "format"))) {
-            char pack_buffer[MAX_STRING_LEN];
-            snprintf(pack_buffer, MAX_STRING_LEN, format, buffer);
-            buffer = pack_buffer;
+            snprintf(formatted, MAX_STRING_LEN, format, buffer);
+            send_buffer = formatted;
         }
-        size_t len = strlen(buffer);
-        msgpack_pack_v4raw(p, len);
-        msgpack_pack_v4raw_body(p, buffer, len);
-        free(converted);
+        size_t len = strlen(send_buffer);
+        msgpack_pack_str(p, len);
+        msgpack_pack_str_body(p, send_buffer, len);
     }
 }
 
