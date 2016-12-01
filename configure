@@ -3395,17 +3395,12 @@ fi
 done
 
 
-ac_fn_c_check_func "$LINENO" "iconv_open" "ac_cv_func_iconv_open"
-if test "x$ac_cv_func_iconv_open" = xyes; then :
-
-else
-  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for iconv_open in -liconv" >&5
-$as_echo_n "checking for iconv_open in -liconv... " >&6; }
-if ${ac_cv_lib_iconv_iconv_open+:} false; then :
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing iconv_open" >&5
+$as_echo_n "checking for library containing iconv_open... " >&6; }
+if ${ac_cv_search_iconv_open+:} false; then :
   $as_echo_n "(cached) " >&6
 else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-liconv  $LIBS"
+  ac_func_search_save_LIBS=$LIBS
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
@@ -3424,25 +3419,41 @@ return iconv_open ();
   return 0;
 }
 _ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_lib_iconv_iconv_open=yes
-else
-  ac_cv_lib_iconv_iconv_open=no
+for ac_lib in '' iconv; do
+  if test -z "$ac_lib"; then
+    ac_res="none required"
+  else
+    ac_res=-l$ac_lib
+    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
+  fi
+  if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_search_iconv_open=$ac_res
 fi
 rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
+    conftest$ac_exeext
+  if ${ac_cv_search_iconv_open+:} false; then :
+  break
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_iconv_iconv_open" >&5
-$as_echo "$ac_cv_lib_iconv_iconv_open" >&6; }
-if test "x$ac_cv_lib_iconv_iconv_open" = xyes; then :
-  LIBS="$LIBS -liconv"
+done
+if ${ac_cv_search_iconv_open+:} false; then :
+
 else
-  as_fn_error $? "\"iconv library not found.\"" "$LINENO" 5; true
-
+  ac_cv_search_iconv_open=no
 fi
+rm conftest.$ac_ext
+LIBS=$ac_func_search_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_iconv_open" >&5
+$as_echo "$ac_cv_search_iconv_open" >&6; }
+ac_res=$ac_cv_search_iconv_open
+if test "$ac_res" != no; then :
+  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
 
-
+else
+  { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error $? "\"iconv library not found.\"
+See \`config.log' for more details" "$LINENO" 5; }
 fi
 
 
@@ -3475,13 +3486,12 @@ fi
 done
 
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for msgpack_version in -lmsgpackc" >&5
-$as_echo_n "checking for msgpack_version in -lmsgpackc... " >&6; }
-if ${ac_cv_lib_msgpackc_msgpack_version+:} false; then :
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing msgpack_version" >&5
+$as_echo_n "checking for library containing msgpack_version... " >&6; }
+if ${ac_cv_search_msgpack_version+:} false; then :
   $as_echo_n "(cached) " >&6
 else
-  ac_check_lib_save_LIBS=$LIBS
-LIBS="-lmsgpackc  $LIBS"
+  ac_func_search_save_LIBS=$LIBS
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
@@ -3500,27 +3510,41 @@ return msgpack_version ();
   return 0;
 }
 _ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_lib_msgpackc_msgpack_version=yes
-else
-  ac_cv_lib_msgpackc_msgpack_version=no
+for ac_lib in '' msgpackc; do
+  if test -z "$ac_lib"; then
+    ac_res="none required"
+  else
+    ac_res=-l$ac_lib
+    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
+  fi
+  if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_search_msgpack_version=$ac_res
 fi
 rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-LIBS=$ac_check_lib_save_LIBS
+    conftest$ac_exeext
+  if ${ac_cv_search_msgpack_version+:} false; then :
+  break
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_msgpackc_msgpack_version" >&5
-$as_echo "$ac_cv_lib_msgpackc_msgpack_version" >&6; }
-if test "x$ac_cv_lib_msgpackc_msgpack_version" = xyes; then :
-  cat >>confdefs.h <<_ACEOF
-#define HAVE_LIBMSGPACKC 1
-_ACEOF
-
-  LIBS="-lmsgpackc $LIBS"
+done
+if ${ac_cv_search_msgpack_version+:} false; then :
 
 else
-  as_fn_error $? "\"msgpack library not found.\"" "$LINENO" 5; break
+  ac_cv_search_msgpack_version=no
+fi
+rm conftest.$ac_ext
+LIBS=$ac_func_search_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_msgpack_version" >&5
+$as_echo "$ac_cv_search_msgpack_version" >&6; }
+ac_res=$ac_cv_search_msgpack_version
+if test "$ac_res" != no; then :
+  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
 
+else
+  { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error $? "\"msgpack library not found.\"
+See \`config.log' for more details" "$LINENO" 5; }
 fi
 
 

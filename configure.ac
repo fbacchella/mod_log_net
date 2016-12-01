@@ -45,13 +45,7 @@ AC_ARG_WITH(iconv,
 
 AC_CHECK_HEADERS([iconv.h],[],[AC_MSG_FAILURE([iconv headers required])])
 
-AC_CHECK_FUNC(iconv_open,
-    [],
-    [AC_CHECK_LIB(iconv, iconv_open,
-      [LIBS="$LIBS -liconv"],
-      [AC_MSG_ERROR("iconv library not found."); true]
-      )]
-)
+AC_SEARCH_LIBS(iconv_open, iconv,,AC_MSG_FAILURE("iconv library not found."))
 
 #### Locate msgpack
 AC_ARG_WITH(msgpack,
@@ -63,10 +57,7 @@ AC_ARG_WITH(msgpack,
 
 AC_CHECK_HEADERS([msgpack.h],[],[AC_MSG_FAILURE([msgpack headers required])])
 
-AC_CHECK_LIB(msgpackc, msgpack_version,
-  ,
-  [AC_MSG_ERROR("msgpack library not found."); break]
-)
+AC_SEARCH_LIBS(msgpack_version, msgpackc,,AC_MSG_FAILURE("msgpack library not found."))
 
 # Checks for library functions.
 AC_CHECK_FUNCS([memcpy])
