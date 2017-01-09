@@ -58,6 +58,7 @@ AC_ARG_WITH(msgpack,
 AC_CHECK_HEADERS([msgpack.h],[],[AC_MSG_FAILURE([msgpack headers required])])
 
 AC_SEARCH_LIBS(msgpack_version, msgpackc,,AC_MSG_FAILURE("msgpack library not found."))
+AC_CHECK_DECL([msgpack_pack_str],, [AC_MSG_FAILURE([msgpack_pack_str not defined, version too old])], [#include <msgpack.h>])
 
 # Checks for library functions.
 AC_CHECK_FUNCS([memcpy])
