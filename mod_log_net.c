@@ -39,6 +39,16 @@ static log_net_config_t config;
 static apr_socket_t   *udp_socket;
 static apr_sockaddr_t *server_addr;
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+/*
+ * log_request_state holds request specific log data that is not
+ * part of the request_rec.
+ */
+typedef struct {
+    apr_time_t request_end_time;
+} log_request_state;
+#endif
+
 /*********
  * Resolver helpers
  */
@@ -167,6 +177,22 @@ static void find_multiple_headers(msgpack_packer* packer,
     return;
 }
 
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+static apr_time_t get_request_end_time(request_rec *r)
+{
+    log_request_state *state = (log_request_state *)ap_get_module_config(r->request_config,
+                                                                         &log_net_module);
+    if (!state) {
+        state = apr_pcalloc(r->pool, sizeof(log_request_state));
+        ap_set_module_config(r->request_config, &log_net_module, state);
+    }
+    if (state->request_end_time == 0) {
+        state->request_end_time = apr_time_now();
+    }
+    return state->request_end_time;
+}
+#endif
+
 /*********
  * Resolve the values
  */
@@ -175,7 +201,7 @@ static void find_multiple_headers(msgpack_packer* packer,
 static void log_bytes_sent(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
     if (!r->sent_bodyct) {
-        msgpack_pack_nil(packer);
+        msgpack_pack_long(packer, 0);
     }
     else {
         msgpack_pack_long(packer, r->bytes_sent);
@@ -210,22 +236,35 @@ static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t 
         
         while ((cookie = apr_strtok(cookies, ";", &last1))) {
             char *name = apr_strtok(cookie, "=", &last2);
-            if (name) {
-                char *value = name + strlen(name) + 1;
-                apr_collapse_spaces(name, name);
-                
+            /* last2 points to the next char following an '=' delim,
+               or the trailing NUL char of the string */
+            char *value = last2;
+            if (name && *name &&  value && *value) {
+                char *last = value - 2;
+                /* Move past leading WS */
+                name += strspn(name, " \t");
+                while (last >= name && apr_isspace(*last)) {
+                    *last = '\0';
+                    --last;
+                }
+
                 if (!strcasecmp(name, a)) {
-                    char *last;
-                    value += strspn(value, " \t");  /* Move past leading WS */
-                    last = value + strlen(value) - 1;
+                    /* last1 points to the next char following the ';' delim,
+                     or the trailing NUL char of the string */
+                    last = last1 - (*last1 ? 2 : 1);
+                    /* Move past leading WS */
+                    value += strspn(value, " \t");
                     while (last >= value && apr_isspace(*last)) {
                         *last = '\0';
                         --last;
                     }
+                    
                     msgpack_pack_data_string(packer, value, info, r);
                     packed = true;
+                    break;
                 }
             }
+            /* Iterate the remaining tokens using apr_strtok(NULL, ...) */
             cookies = NULL;
         }
     }
@@ -257,21 +296,44 @@ static void log_request_file(msgpack_packer* packer, request_rec *r, log_entry_i
 //%...h:  remote host
 static void log_remote_host(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_data_string(packer,
-                        ap_get_remote_host(r->connection,
-                                           r->per_dir_config,
-                                           REMOTE_NAME, NULL),
-                        info, r);
+    const char *remote_host;
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    const char *a = info->param;
+    if (a != NULL && strcmp(a, "real") == 0) {
+        remote_host = ap_get_remote_host(r->connection, r->per_dir_config,
+                                         REMOTE_NAME, NULL);
+    }
+    else {
+#if AP_MODULE_MAGIC_AT_LEAST(20120211,56)
+        remote_host = ap_get_useragent_host(r, REMOTE_NAME, NULL);
+#else
+        remote_host = ap_get_remote_host(r->connection, r->per_dir_config,
+                                         REMOTE_NAME, NULL);
+#endif
+    }
+#else
+    remote_host = ap_get_remote_host(r->connection,
+                                    r->per_dir_config,
+                                     REMOTE_NAME, NULL);
+#endif
+    msgpack_pack_data_string(packer, remote_host, info, r);
 }
 
 //%...a:  remote IP-address
 static void log_remote_address(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
+    const char *remote_addr;
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
-    msgpack_pack_data_string(packer, r->connection->client_ip, info, r);
+    const char *a = info->param;
+    if (a != NULL && strcmp(a, "real") == 0) {
+        remote_addr = r->connection->client_ip;
+    } else {
+        remote_addr = r->useragent_ip;
+    }
 #else
-    msgpack_pack_data_string(packer, r->connection->remote_ip, info, r);
+    remote_addr = r->connection->remote_ip;
 #endif
+    msgpack_pack_data_string(packer, remote_addr, info, r);
 }
 
 //%...A:  local IP-address
@@ -346,35 +408,33 @@ static void log_header_out(msgpack_packer* packer, request_rec *r, log_entry_inf
 
 //%...p:  the canonical port for the server
 //%...{format}p: the canonical port for the server, or the actual local or remote port
+// This match canonical or local format, default to canonical
 static void log_server_port(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
-    if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
-    }
-    apr_port_t port = 0;
+    apr_port_t port = -1;
     
-    if (*a == '\0' || strcasecmp(a, "canonical") == 0) {
+    if (a == NULL || *a == '\0' || strcasecmp(a, "canonical") == 0) {
         port = r->server->port ? r->server->port : ap_default_port(r);
-    }
-    else if (strcasecmp(a, "remote") == 0) {
-#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
-        port = r->connection->client_addr->port;
-#else
-        port = r->connection->remote_addr->port;
-#endif
     }
     else if (strcasecmp(a, "local") == 0) {
         port = r->connection->local_addr->port;
     }
-    if(port != 0) {
-        msgpack_pack_int(packer, port);
-    }
-    else {
-        msgpack_pack_nil(packer);
-    }
+    msgpack_pack_int(packer, port);
+}
+
+//%...p:  the canonical port for the server
+//%...{format}p: the canonical port for the server, or the actual local or remote port
+static void log_remote_port(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+{
+
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    apr_port_t port = r->useragent_addr->port;
+#else
+    apr_port_t port = r->connection->remote_addr->port;
+#endif
+    msgpack_pack_int(packer, port);
 }
 
 //%...P:  the process ID of the child that serviced the request.
@@ -384,10 +444,10 @@ static void log_pid_tid(msgpack_packer* packer, request_rec *r, log_entry_info_t
     const char *a = info->param;
 
     const char * pid_tid = NULL;
-    if (a == NULL || *a == '\0' || !strcasecmp(a, "pid")) {
+    if (a == NULL || *a == '\0' || strcasecmp(a, "pid") == 0) {
         pid_tid = ap_append_pid(r->pool, "", "");
     }
-    else if (!strcasecmp(a, "tid") || !strcasecmp(a, "hextid")) {
+    else if (strcasecmp(a, "tid") == 0 || strcasecmp(a, "hextid") == 0) {
 #if APR_HAS_THREADS
         apr_os_thread_t tid = apr_os_thread_current();
 #else
@@ -403,7 +463,11 @@ static void log_pid_tid(msgpack_packer* packer, request_rec *r, log_entry_info_t
 #endif
                                 &tid);
     }
-    msgpack_pack_data_string(packer, pid_tid, info, r);
+    if (pid_tid != NULL) {
+        msgpack_pack_data_string(packer, pid_tid, info, r);
+    } else {
+        msgpack_pack_nil(packer);
+    }
 }
 
 //%...s:  status.  For requests that got internally redirected, this is status of the *original* request --- %...>s for the last.
@@ -412,39 +476,185 @@ static void log_status(msgpack_packer* packer, request_rec *r, log_entry_info_t*
     msgpack_pack_int(packer, r->status);
 }
 
+//%...R:  The handler generating the response (if any).
+static void log_handler(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+{
+    msgpack_pack_data_string(packer, r->handler, info, r);
+}
+
+static const char *log_request_time_custom(request_rec *r, const char *a,
+                                           apr_time_exp_t *xt)
+{
+    apr_size_t retcode;
+    char tstr[MAX_STRING_LEN];
+    apr_strftime(tstr, &retcode, sizeof(tstr), a, xt);
+    return apr_pstrdup(r->pool, tstr);
+}
+
+#define DEFAULT_REQUEST_TIME_SIZE 32
+typedef struct {
+    unsigned t;
+    char timestr[DEFAULT_REQUEST_TIME_SIZE];
+    unsigned t_validate;
+} cached_request_time;
+
+#define TIME_FMT_CUSTOM          0
+#define TIME_FMT_CLF             1
+#define TIME_FMT_ABS_SEC         2
+#define TIME_FMT_ABS_MSEC        3
+#define TIME_FMT_ABS_USEC        4
+#define TIME_FMT_ABS_MSEC_FRAC   5
+#define TIME_FMT_ABS_USEC_FRAC   6
+
+#define TIME_CACHE_SIZE 4
+#define TIME_CACHE_MASK 3
+static cached_request_time request_time_cache[TIME_CACHE_SIZE];
+
 //%...t:  time, in common log format time format
 //%...{format}t:  The time, in the form given by format, which should be in strftime(3) format.
 static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
+    apr_time_t request_time;
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    // Check info value, always called for @timestamp, but with NULL info
+    const char *a = info != NULL ? info->param : NULL;
+    if (a != NULL && strcmp(a, "end") == 0) {
+        request_time = get_request_end_time(r);
+    } else if (a == NULL || strcmp(a, "begin") == 0){
+        request_time = r->request_time;
+    } else {
+        msgpack_pack_nil(packer);
+        return;
+    }
+#else
+    request_time = r->request_time;
+#endif
+
     apr_time_exp_t xt;
-    ap_explode_recent_localtime(&xt, r->request_time);
-    apr_size_t retcode;
+    ap_explode_recent_localtime(&xt, request_time);
     const char *format = NULL;
-    if(info != NULL) {
+    if (info != NULL) {
         format = apr_table_get(info->options, "format");
     }
-    char formatstr[MAX_STRING_LEN + 1];
-    if(format == NULL) {
-        //Prepare the format with a usec value, strftime don't know usec;
-        snprintf(formatstr, MAX_STRING_LEN, "%s.%06d%s", "%Y-%m-%dT%H:%M:%S", xt.tm_usec, "%z");
-        format = formatstr;
+    int fmt_type = TIME_FMT_CUSTOM;
+    if (format == NULL) {
+        fmt_type = TIME_FMT_CLF;
+    } else if (strcmp(format, "sec") == 0) {
+        fmt_type = TIME_FMT_ABS_SEC;
+    } else if (strcmp(format, "msec") == 0) {
+        fmt_type = TIME_FMT_ABS_MSEC;
+    } else if (strcmp(format, "usec") == 0) {
+        fmt_type = TIME_FMT_ABS_USEC;
+    } else if (strcmp(format, "msec_frac") == 0) {
+        fmt_type = TIME_FMT_ABS_MSEC_FRAC;
+    } else if (strcmp(format, "usec_frac") == 0) {
+        fmt_type = TIME_FMT_ABS_USEC_FRAC;
     }
-    char tstr[MAX_STRING_LEN + 1];
-    apr_strftime(tstr, &retcode, MAX_STRING_LEN, format, &xt);
-    msgpack_pack_string(packer, tstr);
+    
+    printf("%s %d\n", format, fmt_type);
+    if (fmt_type >= TIME_FMT_ABS_SEC) {      /* Absolute (micro-/milli-)second time
+                                              * or msec/usec fraction
+                                              */
+        char* buf = apr_palloc(r->pool, 20);
+        switch (fmt_type) {
+            case TIME_FMT_ABS_SEC:
+                apr_snprintf(buf, 20, "%" APR_TIME_T_FMT, apr_time_sec(request_time));
+                break;
+            case TIME_FMT_ABS_MSEC:
+                apr_snprintf(buf, 20, "%" APR_TIME_T_FMT, apr_time_as_msec(request_time));
+                break;
+            case TIME_FMT_ABS_USEC:
+                apr_snprintf(buf, 20, "%" APR_TIME_T_FMT, request_time);
+                break;
+            case TIME_FMT_ABS_MSEC_FRAC:
+                apr_snprintf(buf, 20, "%03" APR_TIME_T_FMT, apr_time_msec(request_time));
+                break;
+            case TIME_FMT_ABS_USEC_FRAC:
+                apr_snprintf(buf, 20, "%06" APR_TIME_T_FMT, apr_time_usec(request_time));
+                break;
+            default:
+                buf[0] = '\0';
+        }
+        if (strlen(buf) > 0) {
+            msgpack_pack_string(packer, buf);
+        } else {
+            msgpack_pack_nil(packer);
+        }
+    }
+    else if (fmt_type == TIME_FMT_CUSTOM) {  /* Custom format */
+        /* The custom time formatting uses a very large temp buffer
+         * on the stack.  To avoid using so much stack space in the
+         * common case where we're not using a custom format, the code
+         * for the custom format in a separate function.  (That's why
+         * log_request_time_custom is not inlined right here.)
+         */
+        ap_explode_recent_localtime(&xt, request_time);
+        msgpack_pack_string(packer, log_request_time_custom(r, format, &xt));
+    }
+    else {                                   /* CLF format */
+        /* This code uses the same technique as ap_explode_recent_localtime():
+         * optimistic caching with logic to detect and correct race conditions.
+         * See the comments in server/util_time.c for more information.
+         */
+        cached_request_time* cached_time = apr_palloc(r->pool,
+                                                      sizeof(*cached_time));
+        unsigned t_seconds = (unsigned)apr_time_sec(request_time);
+        unsigned i = t_seconds & TIME_CACHE_MASK;
+        *cached_time = request_time_cache[i];
+        if ((t_seconds != cached_time->t) ||
+            (t_seconds != cached_time->t_validate)) {
+            
+            /* Invalid or old snapshot, so compute the proper time string
+             * and store it in the cache
+             */
+            char sign;
+            int timz;
+            
+            ap_explode_recent_localtime(&xt, request_time);
+            timz = xt.tm_gmtoff;
+            if (timz < 0) {
+                timz = -timz;
+                sign = '-';
+            }
+            else {
+                sign = '+';
+            }
+            cached_time->t = t_seconds;
+            //        snprintf(formatstr, MAX_STRING_LEN, "%s.%06d%s", "%Y-%m-%dT%H:%M:%S", xt.tm_usec, "%z");
+
+            apr_snprintf(cached_time->timestr, DEFAULT_REQUEST_TIME_SIZE,
+                         "%04d-%02d-%02dT%02d:%02d:%02d.%06d%c%.2d%.2d",
+                         xt.tm_year+1900, xt.tm_mon + 1, xt.tm_mday,
+                         xt.tm_hour, xt.tm_min, xt.tm_sec, xt.tm_usec,
+                         sign, timz / (60*60), (timz % (60*60)) / 60);
+            cached_time->t_validate = t_seconds;
+            request_time_cache[i] = *cached_time;
+        }
+        printf("%s\n", cached_time->timestr);
+        msgpack_pack_string(packer, cached_time->timestr);
+    }
 }
 
 //%...T:  the time taken to serve the request, in seconds.
 static void log_request_duration(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    apr_time_t duration = get_request_end_time(r) - r->request_time;
+#else
     apr_time_t duration = apr_time_now() - r->request_time;
+#endif
     msgpack_pack_long(packer, apr_time_sec(duration));
 }
 
 //%...D:  the time taken to serve the request, in micro seconds.
 static void log_request_duration_microseconds(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_long(packer, apr_time_now() - r->request_time);
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    apr_time_t duration = get_request_end_time(r) - r->request_time;
+#else
+    apr_time_t duration = apr_time_now() - r->request_time;
+#endif
+    msgpack_pack_long(packer, duration);
 }
 
 //%...u:  remote user (from auth; may be bogus if return status (%s) is 401)
@@ -490,6 +700,29 @@ static void log_request_method(msgpack_packer* packer, request_rec *r, log_entry
 {
     msgpack_pack_data_string(packer, r->method, info, r);
 }
+
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+//%...L:  the request log ID from the error log (or '-' if nothing has been logged to the error log for this request). Look for the matching error log line to see what request caused what error.
+static void log_log_id(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+{
+    const char *a = info->param;
+    
+    const char *log_id;
+    
+    if (a && !strcmp(a, "real")) {
+        log_id = r->connection->log_id ? r->connection->log_id : NULL;
+    }
+    else {
+        log_id = r->log_id ? r->log_id : NULL;
+    }
+    
+    if (log_id != NULL) {
+        msgpack_pack_data_string(packer, log_id, info, r);
+    } else {
+        msgpack_pack_nil(packer);
+    }
+}
+#endif
 
 //%...H:  the request protocol
 static void log_request_protocol(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
@@ -570,6 +803,9 @@ static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     }
     else if(strcasecmp(entry_name, "bytes_sent") == 0) {
         entry_info->pack_entry = log_bytes_sent;
+    }
+    else if(strcasecmp(entry_name, "remote_port") == 0) {
+        entry_info->pack_entry = log_remote_port;
     }
     else if(strcasecmp(entry_name, "cookie") == 0) {
         entry_info->pack_entry = log_cookie;
@@ -652,6 +888,14 @@ static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     }
     else if(strcasecmp(entry_name, "hostname") == 0) {
         entry_info->pack_entry = log_hostname;
+#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
+    }
+    else if(strcasecmp(entry_name, "log_id") == 0) {
+        entry_info->pack_entry = log_log_id;
+    }
+    else if(strcasecmp(entry_name, "handler") == 0) {
+        entry_info->pack_entry = log_handler;
+#endif
     } else {
         return false;
     }
@@ -706,6 +950,9 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
     
     bool first = true;
     while (*arg) {
+        if (arg[0] == '#') {
+            break;
+        }
         char *word = ap_getword_conf(cmd->pool, &arg);
         char *val = strchr(word, '=');
         if(first && val == NULL) {
