@@ -107,6 +107,8 @@ static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_
             iconv_close(converter);
             
             if (done_converted == -1) {
+                ap_log_rerror(APLOG_MARK, APLOG_WARNING, errno, r,
+                              "iconv: unfinished conversion from %s to %s", config.encoding, dst_encoding);
                 msgpack_pack_nil(p);
                 return;
             }
@@ -521,6 +523,7 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
     } else if (a == NULL || strcmp(a, "begin") == 0){
         request_time = r->request_time;
     } else {
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "Invalid time selection: %s", a);
         msgpack_pack_nil(packer);
         return;
     }
@@ -915,6 +918,9 @@ add_log_entries(cmd_parms *cmd, void *dummy, const char *arg)
         if (! resolve_pack(entry_info, entry_name)) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
                          "log_net: unknown log entry %s", entry_name);
+        } else {
+            ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, cmd->server,
+                         "log_net: new log entry %s", entry_name);
         }
         
         apr_table_setn(config.entries, entry_name, (const char *)entry_info);
@@ -943,6 +949,9 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
                      "log_net: unknow log entry %s", entry_name);
         return NULL;
+    } else {
+        ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, cmd->server,
+                     "log_net: new log entry %s", entry_name);
     }
 
     bool first = true;
@@ -1060,6 +1069,8 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
 {
     //Nothing configured, failed silently
     if (config.host == NULL && config.port == 0) {
+        ap_log_error(APLOG_MARK, APLOG_WARNING, 0, s,
+                     "log_net: destination not configured");
         return OK;
     }
     if ( config.host == NULL || config.port == 0) {
@@ -1078,10 +1089,12 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
     }
 
     if ((rv = apr_socket_create(&udp_socket, APR_INET, SOCK_DGRAM, 0, p)) != APR_SUCCESS) {
-          ap_log_error(APLOG_MARK, APLOG_CRIT, rv, s,
+        ap_log_error(APLOG_MARK, APLOG_CRIT, rv, s,
                      "log_net: apr_socket_create failed");
         return !OK;
     }
+    ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, s,
+                 "log_net: UPD socket will send to %s:%d", config.host, config.port);
     return OK;
 }
 
