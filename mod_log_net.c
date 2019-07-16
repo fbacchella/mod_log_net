@@ -39,7 +39,6 @@ static log_net_config_t config;
 static apr_socket_t   *udp_socket;
 static apr_sockaddr_t *server_addr;
 
-#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
 /*
  * log_request_state holds request specific log data that is not
  * part of the request_rec.
@@ -47,7 +46,6 @@ static apr_sockaddr_t *server_addr;
 typedef struct {
     apr_time_t request_end_time;
 } log_request_state;
-#endif
 
 /*********
  * Resolver helpers
@@ -176,22 +174,6 @@ static void find_multiple_headers(msgpack_packer* packer,
     }
     return;
 }
-
-#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
-static apr_time_t get_request_end_time(request_rec *r)
-{
-    log_request_state *state = (log_request_state *)ap_get_module_config(r->request_config,
-                                                                         &log_net_module);
-    if (state == NULL) {
-        state = apr_pcalloc(r->pool, sizeof(log_request_state));
-        ap_set_module_config(r->request_config, &log_net_module, state);
-    }
-    if (state->request_end_time == 0) {
-        state->request_end_time = apr_time_now();
-    }
-    return state->request_end_time;
-}
-#endif
 
 /*********
  * Resolve the values
@@ -482,6 +464,61 @@ static void log_handler(msgpack_packer* packer, request_rec *r, log_entry_info_t
     msgpack_pack_data_string(packer, r->handler, info, r);
 }
 
+/*********************************************
+ * Helpers function for request time logging *
+ *********************************************/
+
+static apr_time_t get_request_end_time(request_rec *r)
+{
+    log_request_state *state = (log_request_state *)ap_get_module_config(r->request_config,
+                                                                         &log_net_module);
+    if (state == NULL) {
+        state = apr_pcalloc(r->pool, sizeof(log_request_state));
+        ap_set_module_config(r->request_config, &log_net_module, state);
+    }
+    if (state->request_end_time == 0) {
+        state->request_end_time = apr_time_now();
+    }
+    return state->request_end_time;
+}
+
+static void store32(void *to, uint32_t num) {
+    uint32_t val = htobe32(num);
+    memcpy(to, &val, 4);
+}
+
+static void store64(void *to, uint64_t num) {
+    uint64_t val = htobe64(num);
+    memcpy(to, &val, 8);
+}
+
+static void msgpack_pack_timestamp(msgpack_packer* pk, apr_time_t request_time) {
+    apr_int64_t sec = apr_time_sec(request_time);
+    apr_int64_t nsec = apr_time_usec(request_time) * 1000;
+    size_t buf_len;
+    char buf[12];
+    
+     if ((sec >> 34) == 0) {
+         uint64_t data64 = (nsec << 34) | sec;
+         if ((data64 & 0xffffffff00000000L) == 0) {
+             // timestamp 32
+             buf_len = 4;
+             store32(buf, data64);
+         } else {
+             // timestamp 64
+             buf_len = 8;
+             store64(buf, data64);
+         }
+     } else  {
+         // timestamp 96
+         buf_len = 12;
+         store32(&buf[0], nsec);
+         store64(&buf[4], sec);
+     }
+     msgpack_pack_ext(pk, buf_len, -1);
+     msgpack_pack_ext_body(pk, buf, buf_len);
+ }
+
 static const char *log_request_time_custom(request_rec *r, const char *a,
                                            apr_time_exp_t *xt)
 {
@@ -492,30 +529,21 @@ static const char *log_request_time_custom(request_rec *r, const char *a,
 }
 
 #define DEFAULT_REQUEST_TIME_SIZE 32
-typedef struct {
-    unsigned t;
-    char timestr[DEFAULT_REQUEST_TIME_SIZE];
-    unsigned t_validate;
-} cached_request_time;
 
 #define TIME_FMT_CUSTOM          0
-#define TIME_FMT_CLF             1
-#define TIME_FMT_ABS_SEC         2
-#define TIME_FMT_ABS_MSEC        3
-#define TIME_FMT_ABS_USEC        4
-#define TIME_FMT_ABS_MSEC_FRAC   5
-#define TIME_FMT_ABS_USEC_FRAC   6
-
-#define TIME_CACHE_SIZE 4
-#define TIME_CACHE_MASK 3
-static cached_request_time request_time_cache[TIME_CACHE_SIZE];
+#define TIME_FMT_ISO8601         1
+#define TIME_FMT_MSGPACK         2
+#define TIME_FMT_ABS_SEC         3
+#define TIME_FMT_ABS_MSEC        4
+#define TIME_FMT_ABS_USEC        5
+#define TIME_FMT_ABS_MSEC_FRAC   6
+#define TIME_FMT_ABS_USEC_FRAC   7
 
 //%...t:  time, in common log format time format
 //%...{format}t:  The time, in the form given by format, which should be in strftime(3) format.
 static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
     apr_time_t request_time;
-#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
     // Check info value, always called for @timestamp, but with NULL info
     const char *a = info != NULL ? info->param : NULL;
     if (a != NULL && strcmp(a, "end") == 0) {
@@ -527,19 +555,14 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
         msgpack_pack_nil(packer);
         return;
     }
-#else
-    request_time = r->request_time;
-#endif
 
-    apr_time_exp_t xt;
-    ap_explode_recent_localtime(&xt, request_time);
     const char *format = NULL;
     if (info != NULL) {
         format = apr_table_get(info->options, "format");
     }
-    int fmt_type = TIME_FMT_CUSTOM;
+    int fmt_type;
     if (format == NULL) {
-        fmt_type = TIME_FMT_CLF;
+        fmt_type = TIME_FMT_MSGPACK;
     } else if (strcmp(format, "sec") == 0) {
         fmt_type = TIME_FMT_ABS_SEC;
     } else if (strcmp(format, "msec") == 0) {
@@ -550,111 +573,90 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
         fmt_type = TIME_FMT_ABS_MSEC_FRAC;
     } else if (strcmp(format, "usec_frac") == 0) {
         fmt_type = TIME_FMT_ABS_USEC_FRAC;
+    } else if (strcmp(format, "iso8601") == 0) {
+        fmt_type = TIME_FMT_ISO8601;
+    } else {
+        fmt_type = TIME_FMT_CUSTOM;
     }
-    
-    printf("%s %d\n", format, fmt_type);
-    if (fmt_type >= TIME_FMT_ABS_SEC) {      /* Absolute (micro-/milli-)second time
-                                              * or msec/usec fraction
-                                              */
-        char* buf = apr_palloc(r->pool, 20);
+    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "request timestamp: %ld, format: %d", request_time, fmt_type);
+
+    if (fmt_type >= TIME_FMT_ABS_SEC 
+        && fmt_type <= TIME_FMT_ABS_USEC_FRAC) {  /* Absolute (micro-/milli-)second time
+                                                   * or msec/usec fraction
+                                                   */
         switch (fmt_type) {
             case TIME_FMT_ABS_SEC:
-                apr_snprintf(buf, 20, "%" APR_TIME_T_FMT, apr_time_sec(request_time));
+                msgpack_pack_int64(packer, apr_time_sec(request_time));
                 break;
             case TIME_FMT_ABS_MSEC:
-                apr_snprintf(buf, 20, "%" APR_TIME_T_FMT, apr_time_as_msec(request_time));
+                msgpack_pack_int64(packer, apr_time_as_msec(request_time));
                 break;
             case TIME_FMT_ABS_USEC:
-                apr_snprintf(buf, 20, "%" APR_TIME_T_FMT, request_time);
+                msgpack_pack_int64(packer, request_time);
                 break;
             case TIME_FMT_ABS_MSEC_FRAC:
-                apr_snprintf(buf, 20, "%03" APR_TIME_T_FMT, apr_time_msec(request_time));
+                msgpack_pack_int32(packer, apr_time_msec(request_time));
                 break;
             case TIME_FMT_ABS_USEC_FRAC:
-                apr_snprintf(buf, 20, "%06" APR_TIME_T_FMT, apr_time_usec(request_time));
+                msgpack_pack_int32(packer, apr_time_usec(request_time));
                 break;
             default:
-                buf[0] = '\0';
-        }
-        if (strlen(buf) > 0) {
-            msgpack_pack_string(packer, buf);
-        } else {
-            msgpack_pack_nil(packer);
+                msgpack_pack_nil(packer);
         }
     }
-    else if (fmt_type == TIME_FMT_CUSTOM) {  /* Custom format */
+    else if (fmt_type == TIME_FMT_CUSTOM) {   /* Custom format */
         /* The custom time formatting uses a very large temp buffer
          * on the stack.  To avoid using so much stack space in the
          * common case where we're not using a custom format, the code
          * for the custom format in a separate function.  (That's why
          * log_request_time_custom is not inlined right here.)
          */
+        apr_time_exp_t xt;
         ap_explode_recent_localtime(&xt, request_time);
         msgpack_pack_string(packer, log_request_time_custom(r, format, &xt));
     }
-    else {                                   /* CLF format */
-        /* This code uses the same technique as ap_explode_recent_localtime():
-         * optimistic caching with logic to detect and correct race conditions.
-         * See the comments in server/util_time.c for more information.
-         */
-        cached_request_time* cached_time = apr_palloc(r->pool,
-                                                      sizeof(*cached_time));
-        unsigned t_seconds = (unsigned)apr_time_sec(request_time);
-        unsigned i = t_seconds & TIME_CACHE_MASK;
-        *cached_time = request_time_cache[i];
-        if ((t_seconds != cached_time->t) ||
-            (t_seconds != cached_time->t_validate)) {
-            
-            /* Invalid or old snapshot, so compute the proper time string
-             * and store it in the cache
-             */
-            char sign;
-            int timz;
-            
-            ap_explode_recent_localtime(&xt, request_time);
-            timz = xt.tm_gmtoff;
-            if (timz < 0) {
-                timz = -timz;
-                sign = '-';
-            }
-            else {
-                sign = '+';
-            }
-            cached_time->t = t_seconds;
-            //        snprintf(formatstr, MAX_STRING_LEN, "%s.%06d%s", "%Y-%m-%dT%H:%M:%S", xt.tm_usec, "%z");
+    else if (fmt_type == TIME_FMT_MSGPACK) {  /* Msgpack timestamp extension */
+        msgpack_pack_timestamp(packer, request_time);
+    }
+    else if (fmt_type == TIME_FMT_ISO8601) {  /* ISO 8601 format */
+        char timestr[DEFAULT_REQUEST_TIME_SIZE];
+        char sign;
+        int timz;
+        apr_time_exp_t xt;
 
-            apr_snprintf(cached_time->timestr, DEFAULT_REQUEST_TIME_SIZE,
-                         "%04d-%02d-%02dT%02d:%02d:%02d.%06d%c%.2d%.2d",
-                         xt.tm_year+1900, xt.tm_mon + 1, xt.tm_mday,
-                         xt.tm_hour, xt.tm_min, xt.tm_sec, xt.tm_usec,
-                         sign, timz / (60*60), (timz % (60*60)) / 60);
-            cached_time->t_validate = t_seconds;
-            request_time_cache[i] = *cached_time;
+        ap_explode_recent_localtime(&xt, request_time);
+        timz = xt.tm_gmtoff;
+        if (timz < 0) {
+            timz = -timz;
+            sign = '-';
         }
-        printf("%s\n", cached_time->timestr);
-        msgpack_pack_string(packer, cached_time->timestr);
+        else {
+            sign = '+';
+        }
+
+        apr_snprintf(timestr, DEFAULT_REQUEST_TIME_SIZE,
+                     "%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d%02d",
+                     xt.tm_year+1900, xt.tm_mon + 1, xt.tm_mday,
+                     xt.tm_hour, xt.tm_min, xt.tm_sec, (int)apr_time_msec(request_time),
+                     sign, timz / (60*60), (timz % (60*60)) / 60);
+        msgpack_pack_string(packer, timestr);
+    }
+    else {
+        msgpack_pack_nil(packer);
     }
 }
 
 //%...T:  the time taken to serve the request, in seconds.
 static void log_request_duration(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
     apr_time_t duration = get_request_end_time(r) - r->request_time;
-#else
-    apr_time_t duration = apr_time_now() - r->request_time;
-#endif
     msgpack_pack_long(packer, apr_time_sec(duration));
 }
 
 //%...D:  the time taken to serve the request, in micro seconds.
 static void log_request_duration_microseconds(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
 {
-#if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
     apr_time_t duration = get_request_end_time(r) - r->request_time;
-#else
-    apr_time_t duration = apr_time_now() - r->request_time;
-#endif
     msgpack_pack_long(packer, duration);
 }
 
