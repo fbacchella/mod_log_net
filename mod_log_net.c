@@ -1048,9 +1048,12 @@ static apr_status_t send_msg_udp(void *message, apr_size_t msg_size, request_rec
     if ((rv = apr_socket_sendto(udp_socket, server_addr, 0, message, &msg_size)) != APR_SUCCESS) {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
                       "log_net: send log message failed");
+        return rv;
+    } else {
+        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
+                      "log_net: log packet sent %lu bytes", msg_size);
+        return APR_SUCCESS;
     }
-
-    return APR_SUCCESS;
 }
 
 static apr_status_t send_udp_msgpack(request_rec *r)
@@ -1062,9 +1065,11 @@ static apr_status_t send_udp_msgpack(request_rec *r)
     void *message;
     size_t msg_size = make_msgpack(r, &message);
     if (msg_size > 0) {
-        send_msg_udp(message, msg_size, r);
+        return send_msg_udp(message, msg_size, r);
+    } else {
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "Generated null message");
+        return APR_SUCCESS;
     }
-    return APR_SUCCESS;
 }
 
 static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s)
