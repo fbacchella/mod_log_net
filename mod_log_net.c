@@ -21,8 +21,43 @@
 
 module AP_MODULE_DECLARE_DATA log_net_module;
 
+enum PACK_FORMAT {
+    ARRAY, RAW_STRING, ICONV_STRING, INT, TIMESTAMP, LONG, INT32, INT64, UINT16, UINT32, UINT64,
+    MULTI_HEADERS
+};
+
+typedef struct multi_headers_t {
+    apr_table_t *table;
+    char *key;
+} multi_headers_t;
+
+typedef union pack_data_t {
+    char       *string_data;
+    apr_time_t  timestamp_data;
+    long        long_data;
+    int         int_data;
+    uint16_t    uint16_data;
+    uint32_t    uint32_data;
+    uint64_t    uint64_data;
+    int64_t     int64_data;
+    int32_t     int32_data;
+    multi_headers_t headers_data;
+} pack_data_t;
+
+typedef struct to_pack_t {
+    enum PACK_FORMAT format;
+    pack_data_t content;
+} to_pack_t;
+
+#define fill_and_return(r, enum_format, data_field, val) \
+to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t)); \
+packed_data->format = enum_format; \
+packed_data->content.data_field = val; \
+return packed_data; \
+
+
 typedef struct log_entry_info_t {
-    void (*pack_entry)(msgpack_packer*, request_rec *, struct log_entry_info_t *);
+    to_pack_t* (*pack_entry)(request_rec *, struct log_entry_info_t *);
     const char *param;
     apr_table_t  *options;
     int final;
@@ -180,28 +215,26 @@ static void find_multiple_headers(msgpack_packer* packer,
  */
 
 //%...B:  bytes sent, excluding HTTP headers.
-static void log_bytes_sent(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_bytes_sent(request_rec *r, log_entry_info_t *info)
 {
-    if (!r->sent_bodyct) {
-        msgpack_pack_long(packer, 0);
-    }
-    else {
-        msgpack_pack_long(packer, r->bytes_sent);
+    if (r->sent_bodyct) {
+        fill_and_return(r,LONG,long_data,r->bytes_sent);
+    } else {
+        return NULL;
     }
 }
 
 //%...{FOOBAR}C:  The contents of the HTTP cookie FOOBAR
-static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_cookie(request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
+        return NULL;
     }
 
     const char *cookies_entry;
-    bool packed = false;
+    to_pack_t *packed_data = NULL;
     /*
      * This supports Netscape version 0 cookies while being tolerant to
      * some properties of RFC2109/2965 version 1 cookies:
@@ -241,8 +274,9 @@ static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t 
                         --last;
                     }
                     
-                    msgpack_pack_data_string(packer, value, info, r);
-                    packed = true;
+                    packed_data = apr_palloc(r->pool, sizeof(to_pack_t));
+                    packed_data->format = ICONV_STRING;
+                    packed_data->content.string_data = value;
                     break;
                 }
             }
@@ -250,33 +284,31 @@ static void log_cookie(msgpack_packer* packer, request_rec *r, log_entry_info_t 
             cookies = NULL;
         }
     }
-    if (! packed) {
-        msgpack_pack_nil(packer);
-    }
+    return packed_data;
 }
 
 //%...{FOOBAR}e:  The contents of the environment variable FOOBAR
-static void log_env_var(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_env_var(request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
+        return NULL;
+    } else {
+        const char *value = apr_table_get(r->subprocess_env, a);
+        fill_and_return(r,ICONV_STRING,string_data,value);
     }
-
-    const char *value = apr_table_get(r->subprocess_env, a);
-    msgpack_pack_data_string(packer, value, info, r);
 }
 
 //%...f:  filename
-static void log_request_file(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_request_file(request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_data_string(packer, r->filename, info, r);
+    const char *value = r->filename;
+    fill_and_return(r,ICONV_STRING,string_data,value);
 }
 
 //%...h:  remote host
-static void log_remote_host(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_remote_host(request_rec *r, log_entry_info_t *info)
 {
     const char *remote_host;
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
@@ -298,11 +330,11 @@ static void log_remote_host(msgpack_packer* packer, request_rec *r, log_entry_in
                                     r->per_dir_config,
                                      REMOTE_NAME, NULL);
 #endif
-    msgpack_pack_data_string(packer, remote_host, info, r);
+    fill_and_return(r,ICONV_STRING,string_data,remote_host);
 }
 
 //%...a:  remote IP-address
-static void log_remote_address(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_remote_address(request_rec *r, log_entry_info_t *info)
 {
     const char *remote_addr;
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
@@ -315,83 +347,84 @@ static void log_remote_address(msgpack_packer* packer, request_rec *r, log_entry
 #else
     remote_addr = r->connection->remote_ip;
 #endif
-    msgpack_pack_data_string(packer, remote_addr, info, r);
+    fill_and_return(r,RAW_STRING,string_data,remote_addr);
 }
 
 //%...A:  local IP-address
-static void log_local_address(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_local_address(request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_data_string(packer, r->connection->local_ip, info, r);
+    fill_and_return(r,RAW_STRING,string_data,r->connection->local_ip);
 }
 
 //%...{Foobar}i:  The contents of Foobar: header line(s) in the request sent to the client.
-static void log_header_in(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_header_in(request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
+        return NULL;
+    } else {
+        const char *header = apr_table_get(r->headers_in, a);
+        fill_and_return(r,ICONV_STRING,string_data,header);
     }
-
-    const char *header = apr_table_get(r->headers_in, a);
-    msgpack_pack_data_string(packer, header, info, r);
 }
 
 //%...k:  number of keepalive requests served over this connection
-static void log_requests_on_connection(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_requests_on_connection(request_rec *r, log_entry_info_t *info)
 {
     int num = r->connection->keepalives ? r->connection->keepalives - 1 : 0;
-    msgpack_pack_int(packer, num);
+    fill_and_return(r,INT,int_data,num);
 }
 
 //%...l:  remote logname (from identd, if supplied)
-static void log_remote_logname(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_remote_logname(request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_data_string(packer, ap_get_remote_logname(r), info, r);
+    fill_and_return(r,ICONV_STRING,string_data,ap_get_remote_logname(r));
 }
 
 //%...{Foobar}n:  The contents of note "Foobar" from another module.
-static void log_note(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_note(request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
+        return NULL;
+    } else {
+        fill_and_return(r,ICONV_STRING,string_data,apr_table_get(r->notes, a));
     }
-    msgpack_pack_data_string(packer, apr_table_get(r->notes, a), info, r);
 }
 
 //%...{Foobar}o:  The contents of Foobar: header line(s) in the reply.
-static void log_header_out(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_header_out(request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
-        msgpack_pack_nil(packer);
-        return;
+        return NULL;
     }
     const char *cp = NULL;
     
     if (!strcasecmp(a, "Content-type") && r->content_type) {
         cp = ap_field_noparam(r->pool, r->content_type);
-        msgpack_pack_data_string(packer, cp, info, r);
+        fill_and_return(r,ICONV_STRING,string_data,cp);
     }
     else if (!strcasecmp(a, "Set-Cookie")) {
-        find_multiple_headers(packer, r, r->headers_out, a);
+        to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t));
+        packed_data->format = MULTI_HEADERS;
+        packed_data->content.headers_data.table = r->headers_out;
+        packed_data->content.headers_data.key = a;
+        return packed_data;
     }
     else {
         cp = apr_table_get(r->headers_out, a);
-        msgpack_pack_data_string(packer, cp, info, r);
+        fill_and_return(r,ICONV_STRING,string_data,cp);
     }
-    
 }
 
 //%...p:  the canonical port for the server
 //%...{format}p: the canonical port for the server, or the actual local or remote port
 // This match canonical or local format, default to canonical
-static void log_server_port(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_server_port(request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
@@ -403,12 +436,12 @@ static void log_server_port(msgpack_packer* packer, request_rec *r, log_entry_in
     else if (strcasecmp(a, "local") == 0) {
         port = r->connection->local_addr->port;
     }
-    msgpack_pack_int(packer, port);
+    fill_and_return(r,INT,int_data,port);
 }
 
 //%...p:  the canonical port for the server
 //%...{format}p: the canonical port for the server, or the actual local or remote port
-static void log_remote_port(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_remote_port(request_rec *r, log_entry_info_t* info)
 {
 
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
@@ -416,12 +449,12 @@ static void log_remote_port(msgpack_packer* packer, request_rec *r, log_entry_in
 #else
     apr_port_t port = r->connection->remote_addr->port;
 #endif
-    msgpack_pack_int(packer, port);
+    fill_and_return(r,INT,int_data,port);
 }
 
 //%...P:  the process ID of the child that serviced the request.
 //%...{format}P: the process ID or thread ID of the child/thread that serviced the request
-static void log_pid_tid(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_pid_tid(request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
@@ -446,22 +479,22 @@ static void log_pid_tid(msgpack_packer* packer, request_rec *r, log_entry_info_t
                                 &tid);
     }
     if (pid_tid != NULL) {
-        msgpack_pack_data_string(packer, pid_tid, info, r);
+        fill_and_return(r,RAW_STRING,string_data,pid_tid);
     } else {
-        msgpack_pack_nil(packer);
+        return NULL;
     }
 }
 
 //%...s:  status.  For requests that got internally redirected, this is status of the *original* request --- %...>s for the last.
-static void log_status(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_status(request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_int(packer, r->status);
+    fill_and_return(r,INT,int_data,r->status);
 }
 
 //%...R:  The handler generating the response (if any).
-static void log_handler(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_handler(request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_data_string(packer, r->handler, info, r);
+    fill_and_return(r,RAW_STRING,string_data,r->handler);
 }
 
 /*********************************************
@@ -537,7 +570,7 @@ enum TIME_FMT
 
 //%...t:  time, in common log format time format
 //%...{format}t:  The time, in the form given by format, which should be in strftime(3) format.
-static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_request_time(request_rec *r, log_entry_info_t *info)
 {
     apr_time_t request_time;
     // Check info value, always called for @timestamp, but with NULL info
@@ -548,8 +581,7 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
         request_time = r->request_time;
     } else {
         ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "Invalid time selection: %s", a);
-        msgpack_pack_nil(packer);
-        return;
+        return NULL;
     }
 
     const char *format = NULL;
@@ -576,6 +608,8 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
     }
     ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "request timestamp: %ld, format: %d", request_time, fmt_type);
 
+    to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t));
+    
     switch (fmt_type) {
         case CUSTOM: {  /* Custom format */
             /* The custom time formatting uses a very large temp buffer
@@ -586,11 +620,13 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
              */
             apr_time_exp_t xt;
             ap_explode_recent_localtime(&xt, request_time);
-            msgpack_pack_string(packer, log_request_time_custom(r, format, &xt));
+            packed_data->format = ICONV_STRING;
+            packed_data->content.string_data = log_request_time_custom(r, format, &xt);
             break;
         }
         case MSGPACK:  /* Msgpack timestamp extension */
-            msgpack_pack_timestamp(packer, request_time);
+            packed_data->format = TIMESTAMP;
+            packed_data->content.timestamp_data = request_time;
             break;
         case ISO8601:  /* ISO 8601 format */ {
             char timestr[DEFAULT_REQUEST_TIME_SIZE];
@@ -613,89 +649,97 @@ static void log_request_time(msgpack_packer* packer, request_rec *r, log_entry_i
                          xt.tm_year+1900, xt.tm_mon + 1, xt.tm_mday,
                          xt.tm_hour, xt.tm_min, xt.tm_sec, (int)apr_time_msec(request_time),
                          sign, timz / (60*60), (timz % (60*60)) / 60);
-            msgpack_pack_string(packer, timestr);
+            packed_data->format = RAW_STRING;
+            packed_data->content.string_data = apr_pstrdup(r->pool, timestr);
             break;
         }
         case ABS_SEC:
-            msgpack_pack_int64(packer, apr_time_sec(request_time));
+            packed_data->format = INT64;
+            packed_data->content.int64_data = apr_time_sec(request_time);
             break;
         case ABS_MSEC:
-            msgpack_pack_int64(packer, apr_time_as_msec(request_time));
+            packed_data->format = INT64;
+            packed_data->content.int64_data = apr_time_as_msec(request_time);
             break;
         case ABS_USEC:
-            msgpack_pack_int64(packer, request_time);
+            packed_data->format = INT64;
+            packed_data->content.int64_data = request_time;
             break;
         case ABS_MSEC_FRAC:
-            msgpack_pack_int32(packer, apr_time_msec(request_time));
+            packed_data->format = UINT16;
+            packed_data->content.uint16_data = apr_time_msec(request_time);
             break;
         case ABS_USEC_FRAC:
-            msgpack_pack_int32(packer, apr_time_usec(request_time));
+            packed_data->format = UINT32;
+            packed_data->content.uint32_data = apr_time_usec(request_time);
             break;
         default:
-            msgpack_pack_nil(packer);
+            return NULL;
     }
+    return NULL;
 }
 
 //%...T:  the time taken to serve the request, in seconds.
-static void log_request_duration(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_request_duration(request_rec *r, log_entry_info_t *info)
 {
     apr_time_t duration = get_request_end_time(r) - r->request_time;
-    msgpack_pack_long(packer, apr_time_sec(duration));
+    fill_and_return(r,LONG,long_data,duration);
 }
 
 //%...D:  the time taken to serve the request, in micro seconds.
-static void log_request_duration_microseconds(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_request_duration_microseconds(request_rec *r, log_entry_info_t *info)
 {
     apr_time_t duration = get_request_end_time(r) - r->request_time;
-    msgpack_pack_long(packer, duration);
+    fill_and_return(r,LONG,long_data,duration);
+    return NULL;
 }
 
 //%...u:  remote user (from auth; may be bogus if return status (%s) is 401)
-static void log_remote_user(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_remote_user(request_rec *r, log_entry_info_t *info)
 {
     const char *rvalue = r->user;
 
     if (rvalue == NULL) {
-        msgpack_pack_nil(packer);
+        return NULL;
     }
     else {
-        msgpack_pack_data_string(packer, rvalue, info, r);
+        fill_and_return(r,ICONV_STRING,string_data,rvalue);
     }
 }
 
 //%...U:  the URL path requested.
-static void log_request_uri(msgpack_packer* packer, request_rec *r, log_entry_info_t *info)
+static to_pack_t* log_request_uri(request_rec *r, log_entry_info_t *info)
 {
-    msgpack_pack_data_string(packer, r->uri, info, r);
+    fill_and_return(r,ICONV_STRING,string_data,r->uri);
 }
 
 //%...v:  the configured name of the server (i.e. which virtual host?)
 /* These next two routines use the canonical name:port so that log
  * parsers don't need to duplicate all the vhost parsing crud.
  */
-static void log_virtual_host(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_virtual_host(request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_data_string(packer, r->server->server_hostname, info, r);
+    fill_and_return(r,ICONV_STRING,string_data,r->server->server_hostname);
 }
 
 //%...V:  the server name according to the UseCanonicalName setting
 /* This respects the setting of UseCanonicalName so that
  * the dynamic mass virtual hosting trick works better.
  */
-static void log_server_name(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_server_name(request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_data_string(packer, ap_get_server_name(r), info, r);
+    fill_and_return(r,ICONV_STRING,string_data,ap_get_server_name(r));
 }
 
 //%...m:  the request method
-static void log_request_method(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_request_method(request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_data_string(packer, r->method, info, r);
+    fill_and_return(r,RAW_STRING,string_data,r->method);
 }
 
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
 //%...L:  the request log ID from the error log (or '-' if nothing has been logged to the error log for this request). Look for the matching error log line to see what request caused what error.
-static void log_log_id(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_log_id(request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
@@ -709,26 +753,26 @@ static void log_log_id(msgpack_packer* packer, request_rec *r, log_entry_info_t*
     }
 
     if (log_id != NULL) {
-        msgpack_pack_data_string(packer, log_id, info, r);
+        fill_and_return(r,RAW_STRING,string_data,log_id);
     } else {
-        msgpack_pack_nil(packer);
+        return NULL;
     }
 }
 #endif
 
 //%...H:  the request protocol
-static void log_request_protocol(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_request_protocol(request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_data_string(packer, r->protocol, info, r);
+    fill_and_return(r,RAW_STRING,string_data,r->protocol);
 }
 
 //%...q:  the query string prepended by "?", or empty if no query string
-static void log_request_query(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_request_query(request_rec *r, log_entry_info_t* info)
 {
     if (r->args) {
-        msgpack_pack_data_string(packer, r->args, info, r);
+        fill_and_return(r,RAW_STRING,string_data,r->args);
     } else {
-        msgpack_pack_nil(packer);
+        return NULL;
     }
 }
 
@@ -738,7 +782,7 @@ static void log_request_query(msgpack_packer* packer, request_rec *r, log_entry_
 //        '-' = connection will be closed after the response is sent.
 //        (This directive was %...c in late versions of Apache 1.3, but
 //         this conflicted with the historical ssl %...{var}c syntax.)
-static void log_connection_status(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_connection_status(request_rec *r, log_entry_info_t* info)
 {
     const char *status;
 
@@ -752,15 +796,15 @@ static void log_connection_status(msgpack_packer* packer, request_rec *r, log_en
     else {
         status = "-";
     }
-    msgpack_pack_data_string(packer, status, info, r);
+    fill_and_return(r,RAW_STRING,string_data,status);
 }
 
 //custom function
-static void log_hostname(msgpack_packer* packer, request_rec *r, log_entry_info_t* info)
+static to_pack_t* log_hostname(request_rec *r, log_entry_info_t* info)
 {
     char hostname[APRMAXHOSTLEN + 1];
     apr_gethostname(hostname, APRMAXHOSTLEN, r->pool);
-    msgpack_pack_data_string(packer, hostname, info, r);
+    fill_and_return(r,RAW_STRING,string_data, apr_pstrdup(r->pool, hostname));
 }
 
 /*****
@@ -1005,15 +1049,56 @@ static size_t make_msgpack(request_rec *r, void **message)
         final_r = final_r->next;
     }
 
-    /* always log the request timestamp*/
-    msgpack_pack_string(pk, "@timestamp"); log_request_time(pk, r, NULL);
-    
     do {
         char *log_entry_name = (char *)t_elt->key;
         log_entry_info_t *log_entry_info = (log_entry_info_t *)t_elt->val;
         if (log_entry_info->pack_entry != NULL) {
-            msgpack_pack_string(pk, log_entry_name);
-            log_entry_info->pack_entry(pk, log_entry_info->final ? final_r : original_r, log_entry_info);
+            to_pack_t *packed_data = log_entry_info->pack_entry(log_entry_info->final ? final_r : original_r, log_entry_info);
+            if (packed_data != NULL) {
+                msgpack_pack_string(pk, log_entry_name);
+                printf("%s %d\n", log_entry_name, packed_data->format);
+                switch (packed_data->format) {
+                    case INT:
+                        msgpack_pack_int(pk, packed_data->content.int_data);
+                        break;
+                    case LONG:
+                        msgpack_pack_long(pk, packed_data->content.long_data);
+                        break;
+                    case INT32:
+                        msgpack_pack_long(pk, packed_data->content.int32_data);
+                        break;
+                    case INT64:
+                        msgpack_pack_long(pk, packed_data->content.int64_data);
+                        break;
+                    case ICONV_STRING:
+                        msgpack_pack_data_string(pk, packed_data->content.string_data,
+                                                 log_entry_info, r);
+                        break;
+                    case MULTI_HEADERS:
+                        find_multiple_headers(pk, r,
+                                              packed_data->content.headers_data.table,
+                                              packed_data->content.headers_data.key);
+                        break;
+                    case UINT32:
+                        msgpack_pack_uint32(pk, packed_data->content.uint32_data);
+                        break;
+                    case UINT64:
+                        msgpack_pack_uint64(pk, packed_data->content.uint64_data);
+                        break;
+                    case TIMESTAMP:
+                        msgpack_pack_timestamp(pk, packed_data->content.timestamp_data);
+                        break;
+                    case RAW_STRING:
+                        msgpack_pack_string(pk, packed_data->content.string_data);
+                        break;
+                    default:
+                        printf("  unandled\n");
+                        msgpack_pack_nil(pk);
+                }
+            } else {
+                msgpack_pack_nil(pk);
+                msgpack_pack_nil(pk);
+            }
         }
         ++t_elt;
     } while (t_elt < t_end);
