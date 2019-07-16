@@ -1109,13 +1109,17 @@ static void register_hooks(apr_pool_t *p)
     ap_hook_post_config(init_udp_socket, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
+#if AP_MODULE_MAGIC_AT_LEAST(20100609,1)
+AP_DECLARE_MODULE(log_net) =
+#else
 module AP_MODULE_DECLARE_DATA log_net_module =
+#endif
 {
     STANDARD20_MODULE_STUFF,
     NULL,               /* create per-dir config */
     NULL,               /* merge per-dir config */
     NULL,               /* server config */
     NULL,               /* merge server config */
-    log_net_directives,   /* command apr_table_t */
+    log_net_directives, /* command apr_table_t */
     register_hooks      /* register hooks */
 };
