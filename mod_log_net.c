@@ -21,34 +21,6 @@
 
 module AP_MODULE_DECLARE_DATA log_net_module;
 
-enum PACK_FORMAT {
-    ARRAY, RAW_STRING, ICONV_STRING, INT, TIMESTAMP, LONG, INT32, INT64, UINT16, UINT32, UINT64,
-    MULTI_HEADERS
-};
-
-typedef struct multi_headers_t {
-    apr_table_t *table;
-    char *key;
-} multi_headers_t;
-
-typedef union pack_data_t {
-    char       *string_data;
-    apr_time_t  timestamp_data;
-    long        long_data;
-    int         int_data;
-    uint16_t    uint16_data;
-    uint32_t    uint32_data;
-    uint64_t    uint64_data;
-    int64_t     int64_data;
-    int32_t     int32_data;
-    multi_headers_t headers_data;
-} pack_data_t;
-
-typedef struct to_pack_t {
-    enum PACK_FORMAT format;
-    pack_data_t content;
-} to_pack_t;
-
 #define fill_and_return(r, enum_format, data_field, val) \
 to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t)); \
 packed_data->format = enum_format; \
@@ -57,7 +29,7 @@ return packed_data; \
 
 
 typedef struct log_entry_info_t {
-    to_pack_t* (*pack_entry)(request_rec *, struct log_entry_info_t *);
+    void (*pack_entry)(msgpack_object *mp_obj, request_rec *, struct log_entry_info_t *);
     const char *param;
     apr_table_t  *options;
     int final;
@@ -86,82 +58,82 @@ typedef struct {
  * Resolver helpers
  */
 
-static void msgpack_pack_string(msgpack_packer* p, const char* buffer)
+static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, char* buffer)
 {
-    size_t len = strlen(buffer);
-    msgpack_pack_str(p, len);
-    msgpack_pack_str_body(p, buffer, len);
+    if (buffer == NULL || strlen(buffer) == 0 || strlen(buffer) > MAX_STRING_LEN) {
+        return;
+    }
+    mp_obj->type = MSGPACK_OBJECT_STR;
+    mp_obj->via.str.size = strlen(buffer);
+    mp_obj->via.str.ptr = apr_pstrdup(r->pool, buffer);
 }
 
-static void msgpack_pack_data_string(msgpack_packer* p, const char* buffer, log_entry_info_t *info, const request_rec *r)
+static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, char* buffer)
 {
-    if (buffer == NULL) {
-        msgpack_pack_nil(p);
+    if (buffer == NULL || strlen(buffer) == 0 || strlen(buffer) > MAX_STRING_LEN) {
+        return;
     }
-    else {
-        char converted[MAX_STRING_LEN];
-        char formatted[MAX_STRING_LEN];
-        const char *send_buffer = buffer;
-        const char *dst_encoding = NULL;
-        if (info != NULL) {
-            dst_encoding = apr_table_get(info->options, "encoding");
+    char converted[MAX_STRING_LEN];
+    char formatted[MAX_STRING_LEN];
+    char *send_buffer = buffer;
+    const char *dst_encoding;
+    if (info != NULL) {
+        dst_encoding = apr_table_get(info->options, "encoding");
+    }
+    if (dst_encoding == NULL) {
+        dst_encoding = "UTF-8";
+    }
+    // Don't convert if encoding are equals or converting from "real" ASCII (7 bits) to UTF-8
+    if (strcmp(config.encoding, dst_encoding) != 0 &&
+        !( strcmp(config.encoding, "ASCII") == 0 && strcmp(config.encoding, "UTF-8") == 0 )) {
+        iconv_t converter = iconv_open(config.encoding, dst_encoding);
+        if (converter == (iconv_t) -1) {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, errno, r,
+                          "iconv: invalid conversion from %s to %s", config.encoding, dst_encoding);
+            return;
         }
-        if (dst_encoding == NULL) {
-            dst_encoding = "UTF-8";
-        }
-        // Don't convert if encoding are equals or converting from "real" ASCII (7 bits) to UTF-8
-        if (strcmp(config.encoding, dst_encoding) != 0 &&
-            !( strcmp(config.encoding, "ASCII") == 0 && strcmp(config.encoding, "UTF-8") == 0 )) {
-            iconv_t converter = iconv_open(config.encoding, dst_encoding);
-            if (converter == (iconv_t) -1) {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, errno, r,
-                              "iconv: invalid conversion from %s to %s", config.encoding, dst_encoding);
-                msgpack_pack_nil(p);
-                return;
-            }
-            size_t inbytesleft = strlen(buffer);
-            char *incursor = (char *) buffer;
-            size_t outbytesleft = MAX_STRING_LEN - 1;
-            char *outcursor = converted;
-            size_t done_converted = 0;
-            do {
-                done_converted = iconv(converter,
-                                       &incursor, &inbytesleft,
-                                       &outcursor, &outbytesleft);
-                
-                if (done_converted == -1 && (errno == EILSEQ || errno == EINVAL)) {
-                    incursor++;
-                    inbytesleft--;
-                    *outcursor++ = '?';
-                    outbytesleft--;
-                }
-            } while (done_converted != -1 && outbytesleft > 0 && inbytesleft > 0);
-            *outcursor = '\0';
-            iconv_close(converter);
+        size_t inbytesleft = strlen(buffer);
+        char *incursor = (char *) buffer;
+        size_t outbytesleft = MAX_STRING_LEN - 1;
+        char *outcursor = converted;
+        size_t done_converted = 0;
+        do {
+            done_converted = iconv(converter,
+                                   &incursor, &inbytesleft,
+                                   &outcursor, &outbytesleft);
             
-            if (done_converted == -1) {
-                ap_log_rerror(APLOG_MARK, APLOG_WARNING, errno, r,
-                              "iconv: unfinished conversion from %s to %s", config.encoding, dst_encoding);
-                msgpack_pack_nil(p);
-                return;
+            if (done_converted == -1 && (errno == EILSEQ || errno == EINVAL)) {
+                incursor++;
+                inbytesleft--;
+                *outcursor++ = '?';
+                outbytesleft--;
             }
-            send_buffer = converted;
+        } while (done_converted != -1 && outbytesleft > 0 && inbytesleft > 0);
+        *outcursor = '\0';
+        iconv_close(converter);
+        
+        if (done_converted == -1) {
+            ap_log_rerror(APLOG_MARK, APLOG_WARNING, errno, r,
+                          "iconv: unfinished conversion from %s to %s", config.encoding, dst_encoding);
+            return;
         }
-        const char *format;
-        if (info != NULL && (format = apr_table_get(info->options, "format"))) {
-            snprintf(formatted, MAX_STRING_LEN, format, buffer);
-            send_buffer = formatted;
-        }
-        size_t len = strlen(send_buffer);
-        msgpack_pack_str(p, len);
-        msgpack_pack_str_body(p, send_buffer, len);
+        send_buffer = converted;
     }
+    const char *format;
+    if (info != NULL && (format = apr_table_get(info->options, "format"))) {
+        snprintf(formatted, MAX_STRING_LEN, format, buffer);
+        send_buffer = formatted;
+    }
+
+    mp_obj->type = MSGPACK_OBJECT_STR;
+    mp_obj->via.str.size = strlen(send_buffer);
+    mp_obj->via.str.ptr = apr_pstrdup(r->pool, send_buffer);
 }
 
-static void find_multiple_headers(msgpack_packer* packer,
+static void find_multiple_headers(msgpack_object *mp_obj,
                                   request_rec *r,
-                                  const apr_table_t *table,
-                                  const char *key)
+                                  apr_table_t *table,
+                                  char *key)
 {
     const apr_table_entry_t *t_end;
     struct sle {
@@ -178,7 +150,7 @@ static void find_multiple_headers(msgpack_packer* packer,
     
     const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
     t_end = t_elt + elts->nelts;
-    int count = 0;
+    uint32_t count = 0;
     result_list = rp = NULL;
     
     do {
@@ -189,21 +161,23 @@ static void find_multiple_headers(msgpack_packer* packer,
             else {
                 rp = rp->next = apr_palloc(r->pool, sizeof(*rp));
             }
-            
+
             rp->next = NULL;
             rp->value = t_elt->val;
             rp->len = strlen(rp->value);
-            
+
             count++;
         }
         ++t_elt;
     } while (t_elt < t_end);
     
     if (result_list) {
-        msgpack_pack_array(packer, count);
+        mp_obj->type= MSGPACK_OBJECT_ARRAY;
+        mp_obj->via.array.size = 0;
+        mp_obj->via.array.ptr = apr_palloc(r->pool, sizeof(msgpack_object) *  count);
         rp = result_list;
-        while (rp) {
-            msgpack_pack_data_string(packer, rp->value, NULL, r);
+        while (rp != NULL) {
+            msgpack_pack_ascii_string(&mp_obj->via.array.ptr[mp_obj->via.array.size++], r, rp->value);
             rp = rp->next;
         }
     }
@@ -215,26 +189,25 @@ static void find_multiple_headers(msgpack_packer* packer,
  */
 
 //%...B:  bytes sent, excluding HTTP headers.
-static to_pack_t* log_bytes_sent(request_rec *r, log_entry_info_t *info)
+static void log_bytes_sent(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     if (r->sent_bodyct) {
-        fill_and_return(r,LONG,long_data,r->bytes_sent);
-    } else {
-        return NULL;
+        mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+        mp_obj->via.u64 = r->bytes_sent;
     }
 }
 
 //%...{FOOBAR}C:  The contents of the HTTP cookie FOOBAR
-static to_pack_t* log_cookie(request_rec *r, log_entry_info_t *info)
+static void log_cookie(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
-        return NULL;
+        return;
     }
 
     const char *cookies_entry;
-    to_pack_t *packed_data = NULL;
+
     /*
      * This supports Netscape version 0 cookies while being tolerant to
      * some properties of RFC2109/2965 version 1 cookies:
@@ -273,10 +246,7 @@ static to_pack_t* log_cookie(request_rec *r, log_entry_info_t *info)
                         *last = '\0';
                         --last;
                     }
-                    
-                    packed_data = apr_palloc(r->pool, sizeof(to_pack_t));
-                    packed_data->format = ICONV_STRING;
-                    packed_data->content.string_data = value;
+                    msgpack_pack_encoded_string(mp_obj, r, info, value);
                     break;
                 }
             }
@@ -284,31 +254,28 @@ static to_pack_t* log_cookie(request_rec *r, log_entry_info_t *info)
             cookies = NULL;
         }
     }
-    return packed_data;
 }
 
 //%...{FOOBAR}e:  The contents of the environment variable FOOBAR
-static to_pack_t* log_env_var(request_rec *r, log_entry_info_t *info)
+static void log_env_var(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
-    if (a == NULL) {
-        return NULL;
-    } else {
-        const char *value = apr_table_get(r->subprocess_env, a);
-        fill_and_return(r,ICONV_STRING,string_data,value);
+    if (a != NULL) {
+        char *value = apr_table_get(r->subprocess_env, a);
+        msgpack_pack_encoded_string(mp_obj, r, info, value);
     }
 }
 
 //%...f:  filename
-static to_pack_t* log_request_file(request_rec *r, log_entry_info_t *info)
+static void log_request_file(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *value = r->filename;
-    fill_and_return(r,ICONV_STRING,string_data,value);
+    msgpack_pack_encoded_string(mp_obj, r, info, value);
 }
 
 //%...h:  remote host
-static to_pack_t* log_remote_host(request_rec *r, log_entry_info_t *info)
+static void log_remote_host(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *remote_host;
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
@@ -327,14 +294,14 @@ static to_pack_t* log_remote_host(request_rec *r, log_entry_info_t *info)
     }
 #else
     remote_host = ap_get_remote_host(r->connection,
-                                    r->per_dir_config,
+                                     r->per_dir_config,
                                      REMOTE_NAME, NULL);
 #endif
-    fill_and_return(r,ICONV_STRING,string_data,remote_host);
+    msgpack_pack_encoded_string(mp_obj, r, info, remote_host);
 }
 
 //%...a:  remote IP-address
-static to_pack_t* log_remote_address(request_rec *r, log_entry_info_t *info)
+static void log_remote_address(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *remote_addr;
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
@@ -347,84 +314,77 @@ static to_pack_t* log_remote_address(request_rec *r, log_entry_info_t *info)
 #else
     remote_addr = r->connection->remote_ip;
 #endif
-    fill_and_return(r,RAW_STRING,string_data,remote_addr);
+    msgpack_pack_ascii_string(mp_obj, r, remote_addr);
 }
 
 //%...A:  local IP-address
-static to_pack_t* log_local_address(request_rec *r, log_entry_info_t *info)
+static void log_local_address(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    fill_and_return(r,RAW_STRING,string_data,r->connection->local_ip);
+    msgpack_pack_ascii_string(mp_obj, r, r->connection->local_ip);
 }
 
 //%...{Foobar}i:  The contents of Foobar: header line(s) in the request sent to the client.
-static to_pack_t* log_header_in(request_rec *r, log_entry_info_t *info)
+static void log_header_in(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
         return NULL;
     } else {
-        const char *header = apr_table_get(r->headers_in, a);
-        fill_and_return(r,ICONV_STRING,string_data,header);
+        char *header = apr_table_get(r->headers_in, a);
+        msgpack_pack_encoded_string(mp_obj, r, info, header);
     }
 }
 
 //%...k:  number of keepalive requests served over this connection
-static to_pack_t* log_requests_on_connection(request_rec *r, log_entry_info_t *info)
+static void log_requests_on_connection(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    int num = r->connection->keepalives ? r->connection->keepalives - 1 : 0;
-    fill_and_return(r,INT,int_data,num);
+    mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+    mp_obj->via.u64 = r->connection->keepalives ? r->connection->keepalives - 1 : 0;
 }
 
 //%...l:  remote logname (from identd, if supplied)
-static to_pack_t* log_remote_logname(request_rec *r, log_entry_info_t *info)
+static void log_remote_logname(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    fill_and_return(r,ICONV_STRING,string_data,ap_get_remote_logname(r));
+    msgpack_pack_encoded_string(mp_obj, r, info, ap_get_remote_logname(r));
 }
 
 //%...{Foobar}n:  The contents of note "Foobar" from another module.
-static to_pack_t* log_note(request_rec *r, log_entry_info_t *info)
+static void log_note(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
-    if (a == NULL) {
-        return NULL;
-    } else {
-        fill_and_return(r,ICONV_STRING,string_data,apr_table_get(r->notes, a));
+    if (a != NULL) {
+        msgpack_pack_encoded_string(mp_obj, r, info, apr_table_get(r->notes, a));
     }
 }
 
 //%...{Foobar}o:  The contents of Foobar: header line(s) in the reply.
-static to_pack_t* log_header_out(request_rec *r, log_entry_info_t *info)
+static void log_header_out(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *a = info->param;
 
     if (a == NULL) {
         return NULL;
     }
-    const char *cp = NULL;
-    
+
     if (!strcasecmp(a, "Content-type") && r->content_type) {
-        cp = ap_field_noparam(r->pool, r->content_type);
-        fill_and_return(r,ICONV_STRING,string_data,cp);
+        char *cp = ap_field_noparam(r->pool, r->content_type);
+        msgpack_pack_encoded_string(mp_obj, r, info, cp);
     }
     else if (!strcasecmp(a, "Set-Cookie")) {
-        to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t));
-        packed_data->format = MULTI_HEADERS;
-        packed_data->content.headers_data.table = r->headers_out;
-        packed_data->content.headers_data.key = a;
-        return packed_data;
+        find_multiple_headers(mp_obj, r, r->headers_out, a);
     }
     else {
-        cp = apr_table_get(r->headers_out, a);
-        fill_and_return(r,ICONV_STRING,string_data,cp);
+        char *cp = apr_table_get(r->headers_out, a);
+        msgpack_pack_encoded_string(mp_obj, r, info, cp);
     }
 }
 
 //%...p:  the canonical port for the server
 //%...{format}p: the canonical port for the server, or the actual local or remote port
 // This match canonical or local format, default to canonical
-static to_pack_t* log_server_port(request_rec *r, log_entry_info_t* info)
+static void log_server_port(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
@@ -436,12 +396,13 @@ static to_pack_t* log_server_port(request_rec *r, log_entry_info_t* info)
     else if (strcasecmp(a, "local") == 0) {
         port = r->connection->local_addr->port;
     }
-    fill_and_return(r,INT,int_data,port);
+    mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+    mp_obj->via.u64 = port;
 }
 
 //%...p:  the canonical port for the server
 //%...{format}p: the canonical port for the server, or the actual local or remote port
-static to_pack_t* log_remote_port(request_rec *r, log_entry_info_t* info)
+static void log_remote_port(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
 
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
@@ -449,12 +410,13 @@ static to_pack_t* log_remote_port(request_rec *r, log_entry_info_t* info)
 #else
     apr_port_t port = r->connection->remote_addr->port;
 #endif
-    fill_and_return(r,INT,int_data,port);
+    mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+    mp_obj->via.u64 = port;
 }
 
 //%...P:  the process ID of the child that serviced the request.
 //%...{format}P: the process ID or thread ID of the child/thread that serviced the request
-static to_pack_t* log_pid_tid(request_rec *r, log_entry_info_t* info)
+static void log_pid_tid(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
@@ -479,22 +441,21 @@ static to_pack_t* log_pid_tid(request_rec *r, log_entry_info_t* info)
                                 &tid);
     }
     if (pid_tid != NULL) {
-        fill_and_return(r,RAW_STRING,string_data,pid_tid);
-    } else {
-        return NULL;
+        msgpack_pack_ascii_string(mp_obj, r, pid_tid);
     }
 }
 
 //%...s:  status.  For requests that got internally redirected, this is status of the *original* request --- %...>s for the last.
-static to_pack_t* log_status(request_rec *r, log_entry_info_t* info)
+static void log_status(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    fill_and_return(r,INT,int_data,r->status);
+    mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+    mp_obj->via.u64 = r->status;
 }
 
 //%...R:  The handler generating the response (if any).
-static to_pack_t* log_handler(request_rec *r, log_entry_info_t* info)
+static void log_handler(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    fill_and_return(r,RAW_STRING,string_data,r->handler);
+    msgpack_pack_ascii_string(mp_obj, r, r->handler);
 }
 
 /*********************************************
@@ -525,40 +486,45 @@ static void store64(void *to, uint64_t num) {
     memcpy(to, &val, 8);
 }
 
-static void msgpack_pack_timestamp(msgpack_packer* pk, apr_time_t request_time) {
+static void msgpack_pack_timestamp(msgpack_object *mp_obj, request_rec *r, apr_time_t request_time) {
     apr_int64_t sec = apr_time_sec(request_time);
     apr_int64_t nsec = apr_time_usec(request_time) * 1000;
-    size_t buf_len;
-    char buf[12];
+    uint32_t buf_len;
+    char *buf;
     
-     if ((sec >> 34) == 0) {
-         uint64_t data64 = (nsec << 34) | sec;
-         if ((data64 & 0xffffffff00000000L) == 0) {
-             // timestamp 32
-             buf_len = 4;
-             store32(buf, data64);
-         } else {
-             // timestamp 64
-             buf_len = 8;
-             store64(buf, data64);
-         }
+    if ((sec >> 34) == 0) {
+        uint64_t data64 = (nsec << 34) | sec;
+        if ((data64 & 0xffffffff00000000L) == 0) {
+            // timestamp 32
+            buf_len = 4;
+            buf = apr_pcalloc(r->pool, buf_len);
+            store32(buf, data64);
+        } else {
+            // timestamp 64
+            buf_len = 8;
+            buf = apr_pcalloc(r->pool, buf_len);
+            store64(buf, data64);
+        }
      } else  {
-         // timestamp 96
-         buf_len = 12;
-         store32(&buf[0], nsec);
-         store64(&buf[4], sec);
-     }
-     msgpack_pack_ext(pk, buf_len, -1);
-     msgpack_pack_ext_body(pk, buf, buf_len);
- }
+        // timestamp 96
+        buf_len = 12;
+         buf = apr_pcalloc(r->pool, buf_len);
+        store32(&buf[0], nsec);
+        store64(&buf[4], sec);
+    }
+    mp_obj->type = MSGPACK_OBJECT_EXT;
+    mp_obj->via.ext.type = -1;
+    mp_obj->via.ext.size = buf_len;
+    mp_obj->via.ext.ptr = buf;
+}
 
-static const char *log_request_time_custom(request_rec *r, const char *a,
-                                           apr_time_exp_t *xt)
+static void log_request_time_custom(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info,
+                                    const char *a, apr_time_exp_t *xt)
 {
     apr_size_t retcode;
     char tstr[MAX_STRING_LEN];
     apr_strftime(tstr, &retcode, sizeof(tstr), a, xt);
-    return apr_pstrdup(r->pool, tstr);
+    msgpack_pack_encoded_string(mp_obj, r, info, tstr);
 }
 
 #define DEFAULT_REQUEST_TIME_SIZE 32
@@ -570,7 +536,7 @@ enum TIME_FMT
 
 //%...t:  time, in common log format time format
 //%...{format}t:  The time, in the form given by format, which should be in strftime(3) format.
-static to_pack_t* log_request_time(request_rec *r, log_entry_info_t *info)
+static void log_request_time(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     apr_time_t request_time;
     // Check info value, always called for @timestamp, but with NULL info
@@ -581,7 +547,7 @@ static to_pack_t* log_request_time(request_rec *r, log_entry_info_t *info)
         request_time = r->request_time;
     } else {
         ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "Invalid time selection: %s", a);
-        return NULL;
+        return;
     }
 
     const char *format = NULL;
@@ -608,8 +574,6 @@ static to_pack_t* log_request_time(request_rec *r, log_entry_info_t *info)
     }
     ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "request timestamp: %ld, format: %d", request_time, fmt_type);
 
-    to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t));
-    
     switch (fmt_type) {
         case CUSTOM: {  /* Custom format */
             /* The custom time formatting uses a very large temp buffer
@@ -620,13 +584,11 @@ static to_pack_t* log_request_time(request_rec *r, log_entry_info_t *info)
              */
             apr_time_exp_t xt;
             ap_explode_recent_localtime(&xt, request_time);
-            packed_data->format = ICONV_STRING;
-            packed_data->content.string_data = log_request_time_custom(r, format, &xt);
+            log_request_time_custom(mp_obj, r, info, format, &xt);
             break;
         }
         case MSGPACK:  /* Msgpack timestamp extension */
-            packed_data->format = TIMESTAMP;
-            packed_data->content.timestamp_data = request_time;
+            msgpack_pack_timestamp(mp_obj, r, request_time);
             break;
         case ISO8601:  /* ISO 8601 format */ {
             char timestr[DEFAULT_REQUEST_TIME_SIZE];
@@ -649,97 +611,91 @@ static to_pack_t* log_request_time(request_rec *r, log_entry_info_t *info)
                          xt.tm_year+1900, xt.tm_mon + 1, xt.tm_mday,
                          xt.tm_hour, xt.tm_min, xt.tm_sec, (int)apr_time_msec(request_time),
                          sign, timz / (60*60), (timz % (60*60)) / 60);
-            packed_data->format = RAW_STRING;
-            packed_data->content.string_data = apr_pstrdup(r->pool, timestr);
+            msgpack_pack_ascii_string(mp_obj, r, timestr);
             break;
         }
         case ABS_SEC:
-            packed_data->format = INT64;
-            packed_data->content.int64_data = apr_time_sec(request_time);
+            mp_obj->type = MSGPACK_OBJECT_NEGATIVE_INTEGER;
+            mp_obj->via.i64 = apr_time_sec(request_time);
             break;
         case ABS_MSEC:
-            packed_data->format = INT64;
-            packed_data->content.int64_data = apr_time_as_msec(request_time);
+            mp_obj->type = MSGPACK_OBJECT_NEGATIVE_INTEGER;
+            mp_obj->via.i64 = apr_time_as_msec(request_time);
             break;
         case ABS_USEC:
-            packed_data->format = INT64;
-            packed_data->content.int64_data = request_time;
+            mp_obj->type = MSGPACK_OBJECT_NEGATIVE_INTEGER;
+            mp_obj->via.i64 = request_time;
             break;
         case ABS_MSEC_FRAC:
-            packed_data->format = UINT16;
-            packed_data->content.uint16_data = apr_time_msec(request_time);
+            mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+            mp_obj->via.u64 = apr_time_msec(request_time);
             break;
         case ABS_USEC_FRAC:
-            packed_data->format = UINT32;
-            packed_data->content.uint32_data = apr_time_usec(request_time);
+            mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+            mp_obj->via.u64 = apr_time_usec(request_time);
             break;
-        default:
-            return NULL;
     }
-    return NULL;
 }
 
 //%...T:  the time taken to serve the request, in seconds.
-static to_pack_t* log_request_duration(request_rec *r, log_entry_info_t *info)
+static void log_request_duration(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    apr_time_t duration = get_request_end_time(r) - r->request_time;
-    fill_and_return(r,LONG,long_data,duration);
+    apr_time_t duration = apr_time_sec(get_request_end_time(r) - r->request_time);
+    mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+    mp_obj->via.u64 = duration;
 }
 
 //%...D:  the time taken to serve the request, in micro seconds.
-static to_pack_t* log_request_duration_microseconds(request_rec *r, log_entry_info_t *info)
+static void log_request_duration_microseconds(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     apr_time_t duration = get_request_end_time(r) - r->request_time;
-    fill_and_return(r,LONG,long_data,duration);
-    return NULL;
+    mp_obj->type = MSGPACK_OBJECT_POSITIVE_INTEGER;
+    mp_obj->via.u64 = duration;
 }
 
 //%...u:  remote user (from auth; may be bogus if return status (%s) is 401)
-static to_pack_t* log_remote_user(request_rec *r, log_entry_info_t *info)
+static void log_remote_user(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
     const char *rvalue = r->user;
 
-    if (rvalue == NULL) {
-        return NULL;
-    }
-    else {
-        fill_and_return(r,ICONV_STRING,string_data,rvalue);
+    if (rvalue != NULL) {
+        msgpack_pack_encoded_string(mp_obj, r, info, rvalue);
     }
 }
 
 //%...U:  the URL path requested.
-static to_pack_t* log_request_uri(request_rec *r, log_entry_info_t *info)
+static void log_request_uri(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    fill_and_return(r,ICONV_STRING,string_data,r->uri);
+    msgpack_pack_encoded_string(mp_obj, r, info, r->uri);
 }
 
 //%...v:  the configured name of the server (i.e. which virtual host?)
 /* These next two routines use the canonical name:port so that log
  * parsers don't need to duplicate all the vhost parsing crud.
  */
-static to_pack_t* log_virtual_host(request_rec *r, log_entry_info_t* info)
+static void log_virtual_host(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    fill_and_return(r,ICONV_STRING,string_data,r->server->server_hostname);
+    msgpack_pack_encoded_string(mp_obj, r, info, r->server->server_hostname);
 }
 
 //%...V:  the server name according to the UseCanonicalName setting
 /* This respects the setting of UseCanonicalName so that
  * the dynamic mass virtual hosting trick works better.
  */
-static to_pack_t* log_server_name(request_rec *r, log_entry_info_t* info)
+static void log_server_name(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    fill_and_return(r,ICONV_STRING,string_data,ap_get_server_name(r));
+    msgpack_pack_encoded_string(mp_obj, r, info, ap_get_server_name(r));
 }
 
 //%...m:  the request method
-static to_pack_t* log_request_method(request_rec *r, log_entry_info_t* info)
+static void log_request_method(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    fill_and_return(r,RAW_STRING,string_data,r->method);
+    msgpack_pack_ascii_string(mp_obj, r, r->method);
 }
 
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
 //%...L:  the request log ID from the error log (or '-' if nothing has been logged to the error log for this request). Look for the matching error log line to see what request caused what error.
-static to_pack_t* log_log_id(request_rec *r, log_entry_info_t* info)
+static void log_log_id(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     const char *a = info->param;
 
@@ -753,26 +709,22 @@ static to_pack_t* log_log_id(request_rec *r, log_entry_info_t* info)
     }
 
     if (log_id != NULL) {
-        fill_and_return(r,RAW_STRING,string_data,log_id);
-    } else {
-        return NULL;
+        msgpack_pack_ascii_string(mp_obj, r, log_id);
     }
 }
 #endif
 
 //%...H:  the request protocol
-static to_pack_t* log_request_protocol(request_rec *r, log_entry_info_t* info)
+static void log_request_protocol(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    fill_and_return(r,RAW_STRING,string_data,r->protocol);
+    msgpack_pack_ascii_string(mp_obj, r, r->protocol);
 }
 
 //%...q:  the query string prepended by "?", or empty if no query string
-static to_pack_t* log_request_query(request_rec *r, log_entry_info_t* info)
+static void log_request_query(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     if (r->args) {
-        fill_and_return(r,RAW_STRING,string_data,r->args);
-    } else {
-        return NULL;
+        msgpack_pack_ascii_string(mp_obj, r, r->args);
     }
 }
 
@@ -782,7 +734,7 @@ static to_pack_t* log_request_query(request_rec *r, log_entry_info_t* info)
 //        '-' = connection will be closed after the response is sent.
 //        (This directive was %...c in late versions of Apache 1.3, but
 //         this conflicted with the historical ssl %...{var}c syntax.)
-static to_pack_t* log_connection_status(request_rec *r, log_entry_info_t* info)
+static void log_connection_status(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     const char *status;
 
@@ -796,15 +748,15 @@ static to_pack_t* log_connection_status(request_rec *r, log_entry_info_t* info)
     else {
         status = "-";
     }
-    fill_and_return(r,RAW_STRING,string_data,status);
+    msgpack_pack_ascii_string(mp_obj, r, status);
 }
 
 //custom function
-static to_pack_t* log_hostname(request_rec *r, log_entry_info_t* info)
+static void log_hostname(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     char hostname[APRMAXHOSTLEN + 1];
     apr_gethostname(hostname, APRMAXHOSTLEN, r->pool);
-    fill_and_return(r,RAW_STRING,string_data, apr_pstrdup(r->pool, hostname));
+    msgpack_pack_ascii_string(mp_obj, r, hostname);
 }
 
 /*****
@@ -975,7 +927,7 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
     entry_info->final = TRUE;
     
     char *entry_name = ap_getword_conf(cmd->pool, &arg);
-    if(entry_name == NULL) {
+    if (entry_name == NULL) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, cmd->server,
                      "log_net: empty log entry");
         return NULL;
@@ -1036,9 +988,7 @@ static size_t make_msgpack(request_rec *r, void **message)
     
     const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
     const apr_table_entry_t *t_end = t_elt + elts->nelts;
-    
-    msgpack_pack_map(pk, 1 + elts->nelts);
-    
+
     // Resolve the requeste original and final
     request_rec *original_r = r;
     while (original_r->prev) {
@@ -1049,60 +999,26 @@ static size_t make_msgpack(request_rec *r, void **message)
         final_r = final_r->next;
     }
 
+    msgpack_object mapping;
+    mapping.type = MSGPACK_OBJECT_MAP;
+    mapping.via.map.ptr = apr_palloc(r->pool, sizeof(msgpack_object_kv) * elts->nelts);
+    mapping.via.map.size = 0;
     do {
         char *log_entry_name = (char *)t_elt->key;
         log_entry_info_t *log_entry_info = (log_entry_info_t *)t_elt->val;
         if (log_entry_info->pack_entry != NULL) {
-            to_pack_t *packed_data = log_entry_info->pack_entry(log_entry_info->final ? final_r : original_r, log_entry_info);
-            if (packed_data != NULL) {
-                msgpack_pack_string(pk, log_entry_name);
-                printf("%s %d\n", log_entry_name, packed_data->format);
-                switch (packed_data->format) {
-                    case INT:
-                        msgpack_pack_int(pk, packed_data->content.int_data);
-                        break;
-                    case LONG:
-                        msgpack_pack_long(pk, packed_data->content.long_data);
-                        break;
-                    case INT32:
-                        msgpack_pack_long(pk, packed_data->content.int32_data);
-                        break;
-                    case INT64:
-                        msgpack_pack_long(pk, packed_data->content.int64_data);
-                        break;
-                    case ICONV_STRING:
-                        msgpack_pack_data_string(pk, packed_data->content.string_data,
-                                                 log_entry_info, r);
-                        break;
-                    case MULTI_HEADERS:
-                        find_multiple_headers(pk, r,
-                                              packed_data->content.headers_data.table,
-                                              packed_data->content.headers_data.key);
-                        break;
-                    case UINT32:
-                        msgpack_pack_uint32(pk, packed_data->content.uint32_data);
-                        break;
-                    case UINT64:
-                        msgpack_pack_uint64(pk, packed_data->content.uint64_data);
-                        break;
-                    case TIMESTAMP:
-                        msgpack_pack_timestamp(pk, packed_data->content.timestamp_data);
-                        break;
-                    case RAW_STRING:
-                        msgpack_pack_string(pk, packed_data->content.string_data);
-                        break;
-                    default:
-                        printf("  unandled\n");
-                        msgpack_pack_nil(pk);
-                }
-            } else {
-                msgpack_pack_nil(pk);
-                msgpack_pack_nil(pk);
+            msgpack_object_kv *map_entry = &mapping.via.map.ptr[mapping.via.map.size];
+            map_entry->val.type = MSGPACK_OBJECT_NIL;
+            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "logging %s", log_entry_name);
+            log_entry_info->pack_entry(&map_entry->val, log_entry_info->final ? final_r : original_r, log_entry_info);
+            if (map_entry->val.type != MSGPACK_OBJECT_NIL) {
+                msgpack_pack_ascii_string(&map_entry->key, r, log_entry_name);
+                mapping.via.map.size++;
             }
         }
         ++t_elt;
     } while (t_elt < t_end);
-
+    msgpack_pack_object(pk, mapping);
     size_t size = buffer->size;
     *message = (void *)apr_palloc(r->pool, size);
     if (*message != NULL) {
