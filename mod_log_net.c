@@ -21,13 +21,6 @@
 
 module AP_MODULE_DECLARE_DATA log_net_module;
 
-#define fill_and_return(r, enum_format, data_field, val) \
-to_pack_t *packed_data = apr_palloc(r->pool, sizeof(to_pack_t)); \
-packed_data->format = enum_format; \
-packed_data->content.data_field = val; \
-return packed_data; \
-
-
 typedef struct log_entry_info_t {
     void (*pack_entry)(msgpack_object *mp_obj, request_rec *, struct log_entry_info_t *);
     const char *param;
@@ -43,8 +36,8 @@ typedef struct {
 } log_net_config_t;
 
 static log_net_config_t config;
-static apr_socket_t   *udp_socket;
-static apr_sockaddr_t *server_addr;
+static apr_socket_t    *udp_socket;
+static apr_sockaddr_t  *server_addr;
 
 /*
  * log_request_state holds request specific log data that is not
@@ -55,28 +48,28 @@ typedef struct {
 } log_request_state;
 
 /*********
- * Resolver helpers
+ * Helpers
  */
 
-static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, char* buffer)
+static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, const char* buffer)
 {
-    if (buffer == NULL || strlen(buffer) == 0 || strlen(buffer) > MAX_STRING_LEN) {
+    if (buffer == NULL || strlen(buffer) == 0) {
         return;
     }
     mp_obj->type = MSGPACK_OBJECT_STR;
     mp_obj->via.str.size = strlen(buffer);
-    mp_obj->via.str.ptr = apr_pstrdup(r->pool, buffer);
+    mp_obj->via.str.ptr = apr_pstrndup(r->pool, buffer, MAX_STRING_LEN);
 }
 
-static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, char* buffer)
+static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer)
 {
-    if (buffer == NULL || strlen(buffer) == 0 || strlen(buffer) > MAX_STRING_LEN) {
+    if (buffer == NULL || strlen(buffer) == 0) {
         return;
     }
     char converted[MAX_STRING_LEN];
     char formatted[MAX_STRING_LEN];
-    char *send_buffer = buffer;
-    const char *dst_encoding;
+    const char *send_buffer = buffer;
+    const char *dst_encoding = NULL;
     if (info != NULL) {
         dst_encoding = apr_table_get(info->options, "encoding");
     }
@@ -133,7 +126,7 @@ static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, 
 static void find_multiple_headers(msgpack_object *mp_obj,
                                   request_rec *r,
                                   apr_table_t *table,
-                                  char *key)
+                                  const char *key)
 {
     const apr_table_entry_t *t_end;
     struct sle {
@@ -141,18 +134,18 @@ static void find_multiple_headers(msgpack_object *mp_obj,
         const char *value;
         apr_size_t len;
     } *result_list, *rp;
-    
+
     const apr_array_header_t *elts = apr_table_elts(table);
-    
-    if (!elts->nelts) {
+
+    if (elts->nelts == 0) {
         return;
     }
-    
+
     const apr_table_entry_t *t_elt = (const apr_table_entry_t *)elts->elts;
     t_end = t_elt + elts->nelts;
     uint32_t count = 0;
     result_list = rp = NULL;
-    
+
     do {
         if (strcasecmp(t_elt->key, key) == 0) {
             if (!result_list) {
@@ -170,11 +163,11 @@ static void find_multiple_headers(msgpack_object *mp_obj,
         }
         ++t_elt;
     } while (t_elt < t_end);
-    
+
     if (result_list) {
         mp_obj->type= MSGPACK_OBJECT_ARRAY;
         mp_obj->via.array.size = 0;
-        mp_obj->via.array.ptr = apr_palloc(r->pool, sizeof(msgpack_object) *  count);
+        mp_obj->via.array.ptr = apr_palloc(r->pool, sizeof(msgpack_object) * count);
         rp = result_list;
         while (rp != NULL) {
             msgpack_pack_ascii_string(&mp_obj->via.array.ptr[mp_obj->via.array.size++], r, rp->value);
@@ -262,7 +255,7 @@ static void log_env_var(msgpack_object *mp_obj, request_rec *r, log_entry_info_t
     const char *a = info->param;
 
     if (a != NULL) {
-        char *value = apr_table_get(r->subprocess_env, a);
+        const char *value = apr_table_get(r->subprocess_env, a);
         msgpack_pack_encoded_string(mp_obj, r, info, value);
     }
 }
@@ -270,8 +263,7 @@ static void log_env_var(msgpack_object *mp_obj, request_rec *r, log_entry_info_t
 //%...f:  filename
 static void log_request_file(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    const char *value = r->filename;
-    msgpack_pack_encoded_string(mp_obj, r, info, value);
+    msgpack_pack_encoded_string(mp_obj, r, info, r->filename);
 }
 
 //%...h:  remote host
@@ -328,10 +320,8 @@ static void log_header_in(msgpack_object *mp_obj, request_rec *r, log_entry_info
 {
     const char *a = info->param;
 
-    if (a == NULL) {
-        return NULL;
-    } else {
-        char *header = apr_table_get(r->headers_in, a);
+    if (a != NULL) {
+        const char *header = apr_table_get(r->headers_in, a);
         msgpack_pack_encoded_string(mp_obj, r, info, header);
     }
 }
@@ -365,18 +355,18 @@ static void log_header_out(msgpack_object *mp_obj, request_rec *r, log_entry_inf
     const char *a = info->param;
 
     if (a == NULL) {
-        return NULL;
+        return;
     }
 
     if (!strcasecmp(a, "Content-type") && r->content_type) {
-        char *cp = ap_field_noparam(r->pool, r->content_type);
+        const char *cp = ap_field_noparam(r->pool, r->content_type);
         msgpack_pack_encoded_string(mp_obj, r, info, cp);
     }
     else if (!strcasecmp(a, "Set-Cookie")) {
         find_multiple_headers(mp_obj, r, r->headers_out, a);
     }
     else {
-        char *cp = apr_table_get(r->headers_out, a);
+        const char *cp = apr_table_get(r->headers_out, a);
         msgpack_pack_encoded_string(mp_obj, r, info, cp);
     }
 }
@@ -491,7 +481,7 @@ static void msgpack_pack_timestamp(msgpack_object *mp_obj, request_rec *r, apr_t
     apr_int64_t nsec = apr_time_usec(request_time) * 1000;
     uint32_t buf_len;
     char *buf;
-    
+
     if ((sec >> 34) == 0) {
         uint64_t data64 = (nsec << 34) | sec;
         if ((data64 & 0xffffffff00000000L) == 0) {
@@ -505,7 +495,7 @@ static void msgpack_pack_timestamp(msgpack_object *mp_obj, request_rec *r, apr_t
             buf = apr_pcalloc(r->pool, buf_len);
             store64(buf, data64);
         }
-     } else  {
+     } else {
         // timestamp 96
         buf_len = 12;
          buf = apr_pcalloc(r->pool, buf_len);
@@ -656,11 +646,7 @@ static void log_request_duration_microseconds(msgpack_object *mp_obj, request_re
 //%...u:  remote user (from auth; may be bogus if return status (%s) is 401)
 static void log_remote_user(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info)
 {
-    const char *rvalue = r->user;
-
-    if (rvalue != NULL) {
-        msgpack_pack_encoded_string(mp_obj, r, info, rvalue);
-    }
+    msgpack_pack_encoded_string(mp_obj, r, info, r->user);
 }
 
 //%...U:  the URL path requested.
@@ -723,9 +709,7 @@ static void log_request_protocol(msgpack_object *mp_obj, request_rec *r, log_ent
 //%...q:  the query string prepended by "?", or empty if no query string
 static void log_request_query(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    if (r->args) {
-        msgpack_pack_ascii_string(mp_obj, r, r->args);
-    }
+    msgpack_pack_ascii_string(mp_obj, r, r->args);
 }
 
 //%...X:  Status of the connection.
@@ -980,6 +964,9 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
 
 static size_t make_msgpack(request_rec *r, void **message)
 {
+    // Ensure a good precision end time for request
+    get_request_end_time(r);
+
     /* creates buffer and serializer instance. */
     msgpack_sbuffer *buffer = msgpack_sbuffer_new();
     msgpack_packer *pk = msgpack_packer_new(buffer, msgpack_sbuffer_write);
@@ -1011,6 +998,7 @@ static size_t make_msgpack(request_rec *r, void **message)
             map_entry->val.type = MSGPACK_OBJECT_NIL;
             ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "logging %s", log_entry_name);
             log_entry_info->pack_entry(&map_entry->val, log_entry_info->final ? final_r : original_r, log_entry_info);
+            // Don't log empty data
             if (map_entry->val.type != MSGPACK_OBJECT_NIL) {
                 msgpack_pack_ascii_string(&map_entry->key, r, log_entry_name);
                 mapping.via.map.size++;
@@ -1058,7 +1046,7 @@ static apr_status_t send_udp_msgpack(request_rec *r)
     if (msg_size > 0) {
         return send_msg_udp(message, msg_size, r);
     } else {
-        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "Generated null message");
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "Generated empty message");
         return APR_SUCCESS;
     }
 }
