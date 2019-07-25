@@ -56,7 +56,7 @@ The logged information are copied from mod_log_config. Generaly any logged value
  * `requests_on_connection`: The umber of keepalive requests served over this connection. Same as %k.
  * `remote_logname`: The remote logname (from identd, if supplied). Same as %l.
  * `status`: The query status. For requests that got internally redirected, this is status of the *original* request . Same as %s
- * `request_time`: The request start time, in ISO 8601 format, with microseconds precision. If the `format` option is given, it will be formatted using strftime(3) or specific Apache extensions like sec, usec and others. If `end` argument is given, it will log the request end time. Same as %t.
+ * `request_time`: The request start time, with microseconds precision. The default is to use the [timestamp extension type](https://github.com/msgpack/msgpack/blob/master/spec.md#timestamp-extension-type). If the `format` option is given, it will be formatted using strftime(3) or specific Apache extensions like sec, usec and others. The custom format `iso8601` was added to use a strict ISO 8601 formatting, with milli-second precision. The numeric time stamp formatting like `sec` will be sent as numeric values. If `end` argument is given, it will log the request end time.Same as %t.
  * `request_duration`: The time taken to serve the request, in seconds. Same as %T.
  * `request_duration_microseconds`:  The time taken to serve the request, in micro seconds. Same as %D.
  * `request_file`: Filename. Same as `%f`.
