@@ -8,6 +8,7 @@
 #include "http_log.h"
 #include "http_protocol.h"
 #include "http_request.h"
+#include "mod_ssl.h" /* ssl_var_lookup */
 
 #include "apr_strings.h"
 #include "util_time.h"
@@ -20,6 +21,8 @@
 #include <msgpack.h>
 
 module AP_MODULE_DECLARE_DATA log_net_module;
+
+static APR_OPTIONAL_FN_TYPE(ssl_var_lookup) *ssl_var_lookup = NULL;
 
 typedef struct log_entry_info_t {
     void (*pack_entry)(msgpack_object *mp_obj, request_rec *, struct log_entry_info_t *);
@@ -735,6 +738,21 @@ static void log_connection_status(msgpack_object *mp_obj, request_rec *r, log_en
     msgpack_pack_ascii_string(mp_obj, r, status);
 }
 
+//%...x:  SSL vars
+static void log_ssl_var(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
+{
+    if (ssl_var_lookup == NULL) {
+        return;
+    }
+
+    const char *a = info->param;
+
+    char *result = ssl_var_lookup(r->pool, r->server, r->connection, r, (char *)a);
+    if (result != NULL && strlen(result) != 0) {
+        msgpack_pack_ascii_string(mp_obj, r, result);
+    }
+}
+
 //custom function
 static void log_hostname(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
@@ -868,6 +886,9 @@ static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     else if (strcasecmp(entry_name, "handler") == 0) {
         entry_info->pack_entry = log_handler;
 #endif
+    }
+    else if (strcasecmp(entry_name, "ssl_var") == 0) {
+        entry_info->pack_entry = log_ssl_var;
     } else {
         return false;
     }
@@ -1084,6 +1105,13 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
     return OK;
 }
 
+static int post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s)
+{
+    ssl_var_lookup = APR_RETRIEVE_OPTIONAL_FN(ssl_var_lookup);
+
+    return init_udp_socket(p, plog, ptemp, s);
+}
+
 static int init_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp){
     bzero(&config, sizeof((config)));
     config.encoding = "UTF-8";
@@ -1105,7 +1133,7 @@ static void register_hooks(apr_pool_t *p)
 {
     ap_hook_log_transaction(send_udp_msgpack, NULL , NULL, APR_HOOK_MIDDLE);
     ap_hook_pre_config(init_config, NULL, NULL, APR_HOOK_MIDDLE);
-    ap_hook_post_config(init_udp_socket, NULL, NULL, APR_HOOK_MIDDLE);
+    ap_hook_post_config(post_config, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 #if AP_MODULE_MAGIC_AT_LEAST(20100609,1)

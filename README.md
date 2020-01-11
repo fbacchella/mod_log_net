@@ -71,6 +71,7 @@ The logged information are copied from mod_log_config. Generaly any logged value
  * `request_protocol`: The request protocol. Same as %H.
  * `request_query`: The query string. Same as %q, but without the '?'.
  * `virtual_host`: The configured name of the server (i.e. which virtual host?). Same as %v.
+ * `ssl_var`: log variables from mod_ssl when it's loaded, ignored otherwise. Same as %x.
 
 Msgpack is a typed format, so when a value is non existent, a null will be returned, instead of '-' as in mod_log_config.
 
