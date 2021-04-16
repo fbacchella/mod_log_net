@@ -479,7 +479,7 @@ static void store64(void *to, uint64_t num) {
     memcpy(to, &val, 8);
 }
 
-static void msgpack_pack_timestamp(msgpack_object *mp_obj, request_rec *r, apr_time_t request_time) {
+static void log_msgpack_pack_timestamp(msgpack_object *mp_obj, request_rec *r, apr_time_t request_time) {
     apr_int64_t sec = apr_time_sec(request_time);
     apr_int64_t nsec = apr_time_usec(request_time) * 1000;
     uint32_t buf_len;
@@ -581,7 +581,7 @@ static void log_request_time(msgpack_object *mp_obj, request_rec *r, log_entry_i
             break;
         }
         case MSGPACK:  /* Msgpack timestamp extension */
-            msgpack_pack_timestamp(mp_obj, r, request_time);
+            log_msgpack_pack_timestamp(mp_obj, r, request_time);
             break;
         case ISO8601:  /* ISO 8601 format */ {
             char timestr[DEFAULT_REQUEST_TIME_SIZE];
