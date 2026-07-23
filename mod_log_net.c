@@ -28,6 +28,29 @@
 #include <iconv.h>
 #include "config.h"
 
+#ifdef HAVE_ENDIAN_H
+#include <endian.h>
+#elif defined(HAVE_SYS_ENDIAN_H)
+#include <sys/endian.h>
+#endif
+
+#if !defined(HAVE_DECL_HTOBE32) || !HAVE_DECL_HTOBE32
+#if defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define htobe32(x) OSSwapHostToBigInt32(x)
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#else
+#include <apr_network_io.h>
+#if APR_IS_BIGENDIAN
+#define htobe32(x) (x)
+#define htobe64(x) (x)
+#else
+#define htobe32(x) apr_swap32(x)
+#define htobe64(x) apr_swap64(x)
+#endif
+#endif
+#endif
+
 #include <msgpack.h>
 
 module AP_MODULE_DECLARE_DATA log_net_module;

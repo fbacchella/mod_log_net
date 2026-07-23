@@ -45,6 +45,15 @@ AC_ARG_WITH(iconv,
 )
 
 AC_CHECK_HEADERS([iconv.h],[],[AC_MSG_FAILURE([iconv headers required])])
+AC_CHECK_HEADERS([endian.h sys/endian.h])
+
+AC_CHECK_DECLS([htobe32, htobe64], [], [], [[
+#ifdef HAVE_ENDIAN_H
+#include <endian.h>
+#elif defined(HAVE_SYS_ENDIAN_H)
+#include <sys/endian.h>
+#endif
+]])
 
 AC_SEARCH_LIBS(iconv_open, iconv,,AC_MSG_FAILURE("iconv library not found."))
 
