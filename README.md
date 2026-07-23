@@ -67,6 +67,8 @@ The logged information are copied from mod_log_config. Generaly any logged value
  * `request_uri`: The URL path requested. Same as %U.
  * `server_name`: The server name according to the UseCanonicalName setting. Same as %V.
  * `server_version`: The value of the server version, as returned by `apachectl -V | grep Server version`.
+ * `agent_type`: The type of the log agent, fixed to `mod_log_net`.
+ * `agent_version`: The version of the log agent.
  * `server_port`: The canonical port for the server. The parameter can be `canonical`, `local`, default to `canonical`. Same as `%p`.
  * `request_method`: The request method. Same as %m.
  * `request_protocol`: The request protocol. Same as %H.

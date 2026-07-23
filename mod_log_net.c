@@ -17,6 +17,7 @@
 #include <errno.h>
 
 #include <iconv.h>
+#include "config.h"
 
 #include <msgpack.h>
 
@@ -681,6 +682,20 @@ static void log_server_version(msgpack_object *mp_obj, request_rec *r, log_entry
     msgpack_pack_encoded_string(mp_obj, r, info, ap_get_server_description());
 }
 
+static void log_agent_type(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
+{
+    msgpack_pack_ascii_string(mp_obj, r, "mod_log_net");
+}
+
+static void log_agent_version(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
+{
+#ifdef PACKAGE_VERSION
+    msgpack_pack_ascii_string(mp_obj, r, PACKAGE_VERSION);
+#else
+    msgpack_pack_ascii_string(mp_obj, r, "unknown");
+#endif
+}
+
 //%...m:  the request method
 static void log_request_method(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
@@ -871,6 +886,12 @@ static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     }
     else if (strcasecmp(entry_name, "server_version") == 0) {
         entry_info->pack_entry = log_server_version;
+    }
+    else if (strcasecmp(entry_name, "agent_type") == 0) {
+        entry_info->pack_entry = log_agent_type;
+    }
+    else if (strcasecmp(entry_name, "agent_version") == 0) {
+        entry_info->pack_entry = log_agent_version;
     }
     else if (strcasecmp(entry_name, "request_method") == 0) {
         entry_info->pack_entry = log_request_method;
