@@ -2,6 +2,15 @@
 
 #include <apr_hash.h>
 #include "ap_config.h"
+
+/* Undefine PACKAGE_ macros defined by Apache headers to avoid redefinition warnings with config.h */
+#undef PACKAGE_BUGREPORT
+#undef PACKAGE_NAME
+#undef PACKAGE_STRING
+#undef PACKAGE_TARNAME
+#undef PACKAGE_URL
+#undef PACKAGE_VERSION
+
 #include "ap_provider.h"
 #include "http_core.h"
 #include "http_config.h"
@@ -689,11 +698,7 @@ static void log_agent_type(msgpack_object *mp_obj, request_rec *r, log_entry_inf
 
 static void log_agent_version(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-#ifdef PACKAGE_VERSION
     msgpack_pack_ascii_string(mp_obj, r, PACKAGE_VERSION);
-#else
-    msgpack_pack_ascii_string(mp_obj, r, "unknown");
-#endif
 }
 
 //%...m:  the request method
