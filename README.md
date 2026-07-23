@@ -44,7 +44,7 @@ The logged information are copied from mod_log_config. Generaly any logged value
  * `bytes_sent`: Bytes sent, excluding HTTP headers. Same as `%B`
  * `connection_status`:  Status of the connection. Same as %X.
  * `cookie`:  The contents of the HTTP cookie given by the parameter. Same as `%{FOOBAR}C`
- * `env_var`: The contents of the environment variable given by the parameter. Only version 0 cookies are fully supported. Same as %{FOOBAR}e.
+ * `env`: The contents of the environment variable given by the parameter. Only version 0 cookies are fully supported. Same as %{FOOBAR}e.
  * `handler`: The handler generating the response (if any). Same as `%R`.
  * `header_in`: The contents of header line(s) given by the parameter in the request sent to the client. Same as %{Foobar}i.
  * `header_out`:  The contents of Foobar: header line(s) in the reply. Same as %...{Foobar}o.
@@ -136,4 +136,3 @@ Add in /etc/logstash/conf.d/ a file:
         codec => msgpack
       }
     }
-    
