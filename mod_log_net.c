@@ -1108,8 +1108,13 @@ static apr_status_t send_msg_udp(void *message, apr_size_t msg_size, request_rec
 {
     apr_status_t rv;
     if ((rv = apr_socket_sendto(udp_socket, server_addr, 0, message, &msg_size)) != APR_SUCCESS) {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
-                      "log_net: send log message failed");
+        if (APR_STATUS_IS_EAGAIN(rv)) {
+            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, rv, r,
+                          "log_net: send log message would block (skipped)");
+        } else {
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r,
+                          "log_net: send log message failed");
+        }
         return rv;
     } else {
         ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
@@ -1162,6 +1167,14 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
                      "log_net: apr_socket_create failed");
         return !OK;
     }
+
+    rv = apr_socket_opt_set(udp_socket, APR_SO_NONBLOCK, 1);
+    if (rv != APR_SUCCESS && rv != APR_ENOTIMPL) {
+        ap_log_error(APLOG_MARK, APLOG_WARNING, rv, s,
+                     "log_net: failed to set UDP socket to non-blocking");
+    }
+    apr_socket_timeout_set(udp_socket, 0);
+
     ap_log_error(APLOG_MARK, APLOG_DEBUG, 0, s,
                  "log_net: UPD socket will send to %s:%d", config.host, config.port);
     return OK;
