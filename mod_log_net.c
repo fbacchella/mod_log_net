@@ -684,7 +684,7 @@ static void log_server_version(msgpack_object *mp_obj, request_rec *r, log_entry
 
 static void log_agent_type(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
-    msgpack_pack_ascii_string(mp_obj, r, "mod_log_net");
+    msgpack_pack_ascii_string(mp_obj, r, PACKAGE_NAME);
 }
 
 static void log_agent_version(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
