@@ -88,24 +88,7 @@ typedef struct {
  * Helpers
  */
 
-static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, const char* buffer)
-{
-    if (buffer == NULL || *buffer == '\0') {
-        return;
-    }
-    size_t len = strlen(buffer);
-    if (len > MAX_STRING_LEN) {
-        len = MAX_STRING_LEN;
-    }
-    mp_obj->type = MSGPACK_OBJECT_STR;
-    mp_obj->via.str.size = len;
-    /* Use directly the buffer pointer to avoid redundant copy in request pool.
-     * The buffer is assumed to be stable for the duration of the logging phase.
-     */
-    mp_obj->via.str.ptr = (char *)buffer;
-}
-
-static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer)
+static void msgpack_pack_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer, int use_dup)
 {
     if (buffer == NULL || *buffer == '\0') {
         return;
@@ -115,14 +98,33 @@ static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, 
 
     const char *format;
     if (info != NULL && (format = apr_table_get(info->options, "format"))) {
-        /* Securely apply format from configuration, ensuring the buffer is treated as data */
         formatted = apr_psprintf(r->pool, format, send_buffer);
         send_buffer = formatted;
+        use_dup = 0; // Already in pool
+    }
+
+    size_t len = strlen(send_buffer);
+    if (len > MAX_STRING_LEN) {
+        len = MAX_STRING_LEN;
     }
 
     mp_obj->type = MSGPACK_OBJECT_STR;
-    mp_obj->via.str.size = strlen(send_buffer);
-    mp_obj->via.str.ptr = apr_pstrdup(r->pool, send_buffer);
+    mp_obj->via.str.size = len;
+    if (use_dup) {
+        mp_obj->via.str.ptr = apr_pstrdup(r->pool, send_buffer);
+    } else {
+        mp_obj->via.str.ptr = (char *)send_buffer;
+    }
+}
+
+static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, const char* buffer)
+{
+    msgpack_pack_string(mp_obj, r, NULL, buffer, 0);
+}
+
+static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer)
+{
+    msgpack_pack_string(mp_obj, r, info, buffer, 1);
 }
 
 static void find_multiple_headers(msgpack_object *mp_obj,
@@ -542,27 +544,17 @@ static void log_request_time(msgpack_object *mp_obj, request_rec *r, log_entry_i
         return;
     }
 
-    const char *format = NULL;
-    if (info != NULL) {
-        format = apr_table_get(info->options, "format");
-    }
-    enum TIME_FMT fmt_type;
-    if (format == NULL) {
-        fmt_type = MSGPACK;
-    } else if (strcmp(format, "sec") == 0) {
-        fmt_type = ABS_SEC;
-    } else if (strcmp(format, "msec") == 0) {
-        fmt_type = ABS_MSEC;
-    } else if (strcmp(format, "usec") == 0) {
-        fmt_type = ABS_USEC;
-    } else if (strcmp(format, "msec_frac") == 0) {
-        fmt_type = ABS_MSEC_FRAC;
-    } else if (strcmp(format, "usec_frac") == 0) {
-        fmt_type = ABS_USEC_FRAC;
-    } else if (strcmp(format, "iso8601") == 0) {
-        fmt_type = ISO8601;
-    } else {
-        fmt_type = CUSTOM;
+    const char *format = (info != NULL) ? apr_table_get(info->options, "format") : NULL;
+    enum TIME_FMT fmt_type = MSGPACK;
+
+    if (format != NULL) {
+        if (strcmp(format, "sec") == 0) fmt_type = ABS_SEC;
+        else if (strcmp(format, "msec") == 0) fmt_type = ABS_MSEC;
+        else if (strcmp(format, "usec") == 0) fmt_type = ABS_USEC;
+        else if (strcmp(format, "msec_frac") == 0) fmt_type = ABS_MSEC_FRAC;
+        else if (strcmp(format, "usec_frac") == 0) fmt_type = ABS_USEC_FRAC;
+        else if (strcmp(format, "iso8601") == 0) fmt_type = ISO8601;
+        else fmt_type = CUSTOM;
     }
     ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "request timestamp: %ld, format: %d", request_time, fmt_type);
 
@@ -791,125 +783,66 @@ static const char *set_log_server_port(cmd_parms *cmd, void *cfg, const char *ar
     return NULL;
 }
 
-static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
-    
-    if (strcasecmp(entry_name, "request_time") == 0) {
-        entry_info->pack_entry = log_request_time;
-    }
-    else if (strcasecmp(entry_name, "protocol") == 0) {
-        entry_info->pack_entry = log_request_protocol;
-    }
-    else if (strcasecmp(entry_name, "bytes_sent") == 0) {
-        entry_info->pack_entry = log_bytes_sent;
-    }
-    else if (strcasecmp(entry_name, "remote_port") == 0) {
-        entry_info->pack_entry = log_remote_port;
-    }
-    else if (strcasecmp(entry_name, "cookie") == 0) {
-        entry_info->pack_entry = log_cookie;
-    }
-    else if (strcasecmp(entry_name, "env") == 0) {
-        entry_info->pack_entry = log_env_var;
-    }
-    else if (strcasecmp(entry_name, "request_file") == 0) {
-        entry_info->pack_entry = log_request_file;
-    }
-    else if (strcasecmp(entry_name, "remote_host") == 0) {
-        entry_info->pack_entry = log_remote_host;
-    }
-    else if (strcasecmp(entry_name, "remote_address") == 0) {
-        entry_info->pack_entry = log_remote_address;
-    }
-    else if (strcasecmp(entry_name, "local_address") == 0) {
-        entry_info->pack_entry = log_local_address;
-    }
-    else if (strcasecmp(entry_name, "header_in") == 0) {
-        entry_info->pack_entry = log_header_in;
-    }
-    else if (strcasecmp(entry_name, "header_out") == 0) {
-        entry_info->pack_entry = log_header_out;
-    }
-    else if (strcasecmp(entry_name, "requests_on_connection") == 0) {
-        entry_info->pack_entry = log_requests_on_connection;
-    }
-    else if (strcasecmp(entry_name, "remote_logname") == 0) {
-        entry_info->pack_entry = log_remote_logname;
-    }
-    else if (strcasecmp(entry_name, "note") == 0) {
-        entry_info->pack_entry = log_note;
-    }
-    else if (strcasecmp(entry_name, "server_port") == 0) {
-        entry_info->pack_entry = log_server_port;
-    }
-    else if (strcasecmp(entry_name, "pid_tid") == 0) {
-        entry_info->pack_entry = log_pid_tid;
-    }
-    else if (strcasecmp(entry_name, "status") == 0) {
-        entry_info->pack_entry = log_status;
-        entry_info->final = FALSE;
-    }
-    else if (strcasecmp(entry_name, "request_time") == 0) {
-        entry_info->pack_entry = log_request_time;
-    }
-    else if (strcasecmp(entry_name, "request_duration") == 0) {
-        entry_info->pack_entry = log_request_duration;
-        entry_info->final = FALSE;
-    }
-    else if (strcasecmp(entry_name, "request_duration_microseconds") == 0) {
-        entry_info->pack_entry = log_request_duration_microseconds;
-        entry_info->final = FALSE;
-    }
-    else if (strcasecmp(entry_name, "remote_user") == 0) {
-        entry_info->pack_entry = log_remote_user;
-        entry_info->final = FALSE;
-    }
-    else if (strcasecmp(entry_name, "request_uri") == 0) {
-        entry_info->pack_entry = log_request_uri;
-    }
-    else if (strcasecmp(entry_name, "virtual_host") == 0) {
-        entry_info->pack_entry = log_virtual_host;
-    }
-    else if (strcasecmp(entry_name, "server_name") == 0) {
-        entry_info->pack_entry = log_server_name;
-    }
-    else if (strcasecmp(entry_name, "server_version") == 0) {
-        entry_info->pack_entry = log_server_version;
-    }
-    else if (strcasecmp(entry_name, "agent_type") == 0) {
-        entry_info->pack_entry = log_agent_type;
-    }
-    else if (strcasecmp(entry_name, "agent_version") == 0) {
-        entry_info->pack_entry = log_agent_version;
-    }
-    else if (strcasecmp(entry_name, "request_method") == 0) {
-        entry_info->pack_entry = log_request_method;
-    }
-    else if (strcasecmp(entry_name, "request_protocol") == 0) {
-        entry_info->pack_entry = log_request_protocol;
-    }
-    else if (strcasecmp(entry_name, "request_query") == 0) {
-        entry_info->pack_entry = log_request_query;
-    }
-    else if (strcasecmp(entry_name, "connection_status") == 0) {
-        entry_info->pack_entry = log_connection_status;
-    }
-    else if (strcasecmp(entry_name, "hostname") == 0) {
-        entry_info->pack_entry = log_hostname;
+typedef void (*pack_entry_fn)(msgpack_object *mp_obj, request_rec *, struct log_entry_info_t *);
+
+typedef struct {
+    const char *name;
+    pack_entry_fn func;
+    int final_by_default;
+} log_entry_dispatch_t;
+
+static const log_entry_dispatch_t dispatch_table[] = {
+    {"request_time", log_request_time, TRUE},
+    {"protocol", log_request_protocol, TRUE},
+    {"bytes_sent", log_bytes_sent, TRUE},
+    {"remote_port", log_remote_port, TRUE},
+    {"cookie", log_cookie, TRUE},
+    {"env", log_env_var, TRUE},
+    {"request_file", log_request_file, TRUE},
+    {"remote_host", log_remote_host, TRUE},
+    {"remote_address", log_remote_address, TRUE},
+    {"local_address", log_local_address, TRUE},
+    {"header_in", log_header_in, TRUE},
+    {"header_out", log_header_out, TRUE},
+    {"requests_on_connection", log_requests_on_connection, TRUE},
+    {"remote_logname", log_remote_logname, TRUE},
+    {"note", log_note, TRUE},
+    {"server_port", log_server_port, TRUE},
+    {"pid_tid", log_pid_tid, TRUE},
+    {"status", log_status, FALSE},
+    {"request_duration", log_request_duration, FALSE},
+    {"request_duration_microseconds", log_request_duration_microseconds, FALSE},
+    {"remote_user", log_remote_user, FALSE},
+    {"request_uri", log_request_uri, TRUE},
+    {"virtual_host", log_virtual_host, TRUE},
+    {"server_name", log_server_name, TRUE},
+    {"server_version", log_server_version, TRUE},
+    {"agent_type", log_agent_type, TRUE},
+    {"agent_version", log_agent_version, TRUE},
+    {"request_method", log_request_method, TRUE},
+    {"request_protocol", log_request_protocol, TRUE},
+    {"request_query", log_request_query, TRUE},
+    {"connection_status", log_connection_status, TRUE},
+    {"hostname", log_hostname, TRUE},
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
-    }
-    else if (strcasecmp(entry_name, "log_id") == 0) {
-        entry_info->pack_entry = log_log_id;
-    }
-    else if (strcasecmp(entry_name, "handler") == 0) {
-        entry_info->pack_entry = log_handler;
+    {"log_id", log_log_id, TRUE},
+    {"handler", log_handler, TRUE},
 #endif
+    {"ssl_var", log_ssl_var, TRUE},
+    {NULL, NULL, FALSE}
+};
+
+static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
+    const log_entry_dispatch_t *d = dispatch_table;
+    while (d->name) {
+        if (strcasecmp(entry_name, d->name) == 0) {
+            entry_info->pack_entry = d->func;
+            entry_info->final = d->final_by_default;
+            return true;
+        }
+        d++;
     }
-    else if (strcasecmp(entry_name, "ssl_var") == 0) {
-        entry_info->pack_entry = log_ssl_var;
-    } else {
-        return false;
-    }
-    return true;
+    return false;
 }
 
 static const char *
