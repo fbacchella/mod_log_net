@@ -672,11 +672,6 @@ static void log_server_version(msgpack_object *mp_obj, request_rec *r, log_entry
     msgpack_pack_encoded_string(mp_obj, r, info, ap_get_server_description());
 }
 
-static void log_agent_type(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
-{
-    msgpack_pack_ascii_string(mp_obj, r, PACKAGE_NAME);
-}
-
 static void log_module_version(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
     msgpack_pack_ascii_string(mp_obj, r, PACKAGE_VERSION);
@@ -817,7 +812,6 @@ static const log_entry_dispatch_t dispatch_table[] = {
     {"virtual_host", log_virtual_host, TRUE},
     {"server_name", log_server_name, TRUE},
     {"server_version", log_server_version, TRUE},
-    {"agent_type", log_agent_type, TRUE},
     {"module_version", log_module_version, TRUE},
     {"request_method", log_request_method, TRUE},
     {"request_protocol", log_request_protocol, TRUE},
