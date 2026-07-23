@@ -4,6 +4,7 @@
 AC_PREREQ([2.65])
 AC_INIT([mod_log_net], [0.3], [fbacchella@spamcop.net])
 AC_CONFIG_SRCDIR([mod_log_net.c])
+AC_CONFIG_HEADERS([config.h])
 
 # Checks for programs.
 AC_PROG_CC
