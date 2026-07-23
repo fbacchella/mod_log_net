@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.65])
-AC_INIT([mod_log_net], [0.3], [fbacchella@spamcop.net])
+AC_INIT([mod_log_net], [0.7], [fabrice.bacchella@orange.fr])
 AC_CONFIG_SRCDIR([mod_log_net.c])
 AC_CONFIG_HEADERS([config.h])
 
