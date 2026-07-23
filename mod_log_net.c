@@ -92,9 +92,13 @@ static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, co
     if (buffer == NULL || strlen(buffer) == 0) {
         return;
     }
+    size_t len = strlen(buffer);
+    if (len > MAX_STRING_LEN) {
+        len = MAX_STRING_LEN;
+    }
     mp_obj->type = MSGPACK_OBJECT_STR;
-    mp_obj->via.str.size = strlen(buffer);
-    mp_obj->via.str.ptr = apr_pstrndup(r->pool, buffer, MAX_STRING_LEN);
+    mp_obj->via.str.size = len;
+    mp_obj->via.str.ptr = apr_pstrndup(r->pool, buffer, len);
 }
 
 static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer)
@@ -102,8 +106,8 @@ static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, 
     if (buffer == NULL || strlen(buffer) == 0) {
         return;
     }
-    char converted[MAX_STRING_LEN];
-    char formatted[MAX_STRING_LEN];
+    char *converted = NULL;
+    char *formatted = NULL;
     const char *send_buffer = buffer;
     const char *dst_encoding = NULL;
     if (info != NULL) {
@@ -113,8 +117,7 @@ static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, 
         dst_encoding = "UTF-8";
     }
     // Don't convert if encoding are equals or converting from "real" ASCII (7 bits) to UTF-8
-    if (strcmp(config.encoding, dst_encoding) != 0 &&
-        !( strcmp(config.encoding, "ASCII") == 0 && strcmp(config.encoding, "UTF-8") == 0 )) {
+    if (strcmp(config.encoding, dst_encoding) != 0) {
         iconv_t converter = iconv_open(config.encoding, dst_encoding);
         if (converter == (iconv_t) -1) {
             ap_log_rerror(APLOG_MARK, APLOG_ERR, errno, r,
@@ -124,6 +127,7 @@ static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, 
         size_t inbytesleft = strlen(buffer);
         char *incursor = (char *) buffer;
         size_t outbytesleft = MAX_STRING_LEN - 1;
+        converted = apr_palloc(r->pool, MAX_STRING_LEN);
         char *outcursor = converted;
         size_t done_converted = 0;
         do {
@@ -141,16 +145,17 @@ static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, 
         *outcursor = '\0';
         iconv_close(converter);
         
-        if (done_converted == -1) {
+        if (done_converted == -1 && inbytesleft > 0) {
             ap_log_rerror(APLOG_MARK, APLOG_WARNING, errno, r,
                           "iconv: unfinished conversion from %s to %s", config.encoding, dst_encoding);
-            return;
+            // We still use what we converted
         }
         send_buffer = converted;
     }
     const char *format;
     if (info != NULL && (format = apr_table_get(info->options, "format"))) {
-        snprintf(formatted, MAX_STRING_LEN, format, buffer);
+        /* Securely apply format from configuration, ensuring the buffer is treated as data */
+        formatted = apr_psprintf(r->pool, format, send_buffer);
         send_buffer = formatted;
     }
 
@@ -548,8 +553,8 @@ static void log_request_time_custom(msgpack_object *mp_obj, request_rec *r, log_
                                     const char *a, apr_time_exp_t *xt)
 {
     apr_size_t retcode;
-    char tstr[MAX_STRING_LEN];
-    apr_strftime(tstr, &retcode, sizeof(tstr), a, xt);
+    char *tstr = apr_palloc(r->pool, MAX_STRING_LEN);
+    apr_strftime(tstr, &retcode, MAX_STRING_LEN, a, xt);
     msgpack_pack_encoded_string(mp_obj, r, info, tstr);
 }
 
@@ -617,7 +622,7 @@ static void log_request_time(msgpack_object *mp_obj, request_rec *r, log_entry_i
             log_msgpack_pack_timestamp(mp_obj, r, request_time);
             break;
         case ISO8601:  /* ISO 8601 format */ {
-            char timestr[DEFAULT_REQUEST_TIME_SIZE];
+            char *timestr = apr_palloc(r->pool, DEFAULT_REQUEST_TIME_SIZE);
             char sign;
             int timz;
             apr_time_exp_t xt;
