@@ -92,7 +92,7 @@ typedef struct {
 
 static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, const char* buffer)
 {
-    if (buffer == NULL || strlen(buffer) == 0) {
+    if (buffer == NULL || *buffer == '\0') {
         return;
     }
     size_t len = strlen(buffer);
@@ -101,7 +101,10 @@ static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, co
     }
     mp_obj->type = MSGPACK_OBJECT_STR;
     mp_obj->via.str.size = len;
-    mp_obj->via.str.ptr = apr_pstrndup(r->pool, buffer, len);
+    /* Use directly the buffer pointer to avoid redundant copy in request pool.
+     * The buffer is assumed to be stable for the duration of the logging phase.
+     */
+    mp_obj->via.str.ptr = (char *)buffer;
 }
 
 static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer)
