@@ -678,7 +678,6 @@ ac_subst_files=''
 ac_user_opts='
 enable_option_checking
 with_apxs
-with_iconv
 with_msgpack
 '
       ac_precious_vars='build_alias
@@ -1307,7 +1306,6 @@ Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
   --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)
   --with-apxs             /absolute/path/to/apxs
-  --with-iconv=DIR        iconv base directory
   --with-msgpack=DIR      msgpack base directory
 
 Some influential environment variables:
@@ -3645,18 +3643,7 @@ as_fn_error $? "apxs not found
 See 'config.log' for more details" "$LINENO" 5; }
 fi
 
-#### Locate iconv
-
-# Check whether --with-iconv was given.
-if test ${with_iconv+y}
-then :
-  withval=$with_iconv; iconv="$withval"
-   CPPFLAGS="$CPPFLAGS -I$withval/include"
-   LDFLAGS="$LDFLAGS -L$withval/lib"
-
-fi
-
-
+#### Locate msgpack
 
 ac_header= ac_cache=
 for ac_item in $ac_header_c_list
@@ -3687,22 +3674,6 @@ then :
 printf '%s\n' "#define STDC_HEADERS 1" >>confdefs.h
 
 fi
-       for ac_header in iconv.h
-do :
-  ac_fn_c_check_header_compile "$LINENO" "iconv.h" "ac_cv_header_iconv_h" "$ac_includes_default"
-if test "x$ac_cv_header_iconv_h" = xyes
-then :
-  printf '%s\n' "#define HAVE_ICONV_H 1" >>confdefs.h
-
-else case e in #(
-  e) { { printf '%s\n' "$as_me:${as_lineno-$LINENO}: error: in '$ac_pwd':" >&5
-printf '%s\n' "$as_me: error: in '$ac_pwd':" >&2;}
-as_fn_error $? "iconv headers required
-See 'config.log' for more details" "$LINENO" 5; } ;;
-esac
-fi
-
-done
 ac_fn_c_check_header_compile "$LINENO" "endian.h" "ac_cv_header_endian_h" "$ac_includes_default"
 if test "x$ac_cv_header_endian_h" = xyes
 then :
@@ -3877,81 +3848,6 @@ fi
 printf '%s\n' "#define HAVE_DECL_HTOBE64 $ac_have_decl" >>confdefs.h
 
 
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for library containing iconv_open" >&5
-printf %s "checking for library containing iconv_open... " >&6; }
-if test ${ac_cv_search_iconv_open+y}
-then :
-  printf %s "(cached) " >&6
-else case e in #(
-  e) ac_func_search_save_LIBS=$LIBS
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.
-   The 'extern "C"' is for builds by C++ compilers;
-   although this is not generally supported in C code supporting it here
-   has little cost and some practical benefit (sr 110532).  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char iconv_open (void);
-int
-main (void)
-{
-return iconv_open ();
-  ;
-  return 0;
-}
-_ACEOF
-for ac_lib in '' iconv
-do
-  if test -z "$ac_lib"; then
-    ac_res="none required"
-  else
-    ac_res=-l$ac_lib
-    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
-  fi
-  if ac_fn_c_try_link "$LINENO"
-then :
-  ac_cv_search_iconv_open=$ac_res
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.beam \
-    conftest$ac_exeext
-  if test ${ac_cv_search_iconv_open+y}
-then :
-  break
-fi
-done
-if test ${ac_cv_search_iconv_open+y}
-then :
-
-else case e in #(
-  e) ac_cv_search_iconv_open=no ;;
-esac
-fi
-rm conftest.$ac_ext
-LIBS=$ac_func_search_save_LIBS ;;
-esac
-fi
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_iconv_open" >&5
-printf '%s\n' "$ac_cv_search_iconv_open" >&6; }
-ac_res=$ac_cv_search_iconv_open
-if test "$ac_res" != no
-then :
-  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
-
-else case e in #(
-  e) { { printf '%s\n' "$as_me:${as_lineno-$LINENO}: error: in '$ac_pwd':" >&5
-printf '%s\n' "$as_me: error: in '$ac_pwd':" >&2;}
-as_fn_error $? "\"iconv library not found.\"
-See 'config.log' for more details" "$LINENO" 5; } ;;
-esac
-fi
-
-
-#### Locate msgpack
 
 # Check whether --with-msgpack was given.
 if test ${with_msgpack+y}

@@ -25,7 +25,6 @@
 
 #include <errno.h>
 
-#include <iconv.h>
 #include "config.h"
 
 #ifdef HAVE_ENDIAN_H
@@ -67,7 +66,6 @@ typedef struct log_entry_info_t {
 typedef struct {
     const char   *host;
     apr_port_t    port;
-    const char   *encoding;
     apr_table_t  *entries;
 } log_net_config_t;
 
@@ -109,55 +107,12 @@ static void msgpack_pack_ascii_string(msgpack_object *mp_obj, request_rec *r, co
 
 static void msgpack_pack_encoded_string(msgpack_object *mp_obj, request_rec *r, log_entry_info_t *info, const char* buffer)
 {
-    if (buffer == NULL || strlen(buffer) == 0) {
+    if (buffer == NULL || *buffer == '\0') {
         return;
     }
-    char *converted = NULL;
-    char *formatted = NULL;
     const char *send_buffer = buffer;
-    const char *dst_encoding = NULL;
-    if (info != NULL) {
-        dst_encoding = apr_table_get(info->options, "encoding");
-    }
-    if (dst_encoding == NULL) {
-        dst_encoding = "UTF-8";
-    }
-    // Don't convert if encoding are equals or converting from "real" ASCII (7 bits) to UTF-8
-    if (strcmp(config.encoding, dst_encoding) != 0) {
-        iconv_t converter = iconv_open(config.encoding, dst_encoding);
-        if (converter == (iconv_t) -1) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, errno, r,
-                          "iconv: invalid conversion from %s to %s", config.encoding, dst_encoding);
-            return;
-        }
-        size_t inbytesleft = strlen(buffer);
-        char *incursor = (char *) buffer;
-        size_t outbytesleft = MAX_STRING_LEN - 1;
-        converted = apr_palloc(r->pool, MAX_STRING_LEN);
-        char *outcursor = converted;
-        size_t done_converted = 0;
-        do {
-            done_converted = iconv(converter,
-                                   &incursor, &inbytesleft,
-                                   &outcursor, &outbytesleft);
-            
-            if (done_converted == -1 && (errno == EILSEQ || errno == EINVAL)) {
-                incursor++;
-                inbytesleft--;
-                *outcursor++ = '?';
-                outbytesleft--;
-            }
-        } while (done_converted != -1 && outbytesleft > 0 && inbytesleft > 0);
-        *outcursor = '\0';
-        iconv_close(converter);
-        
-        if (done_converted == -1 && inbytesleft > 0) {
-            ap_log_rerror(APLOG_MARK, APLOG_WARNING, errno, r,
-                          "iconv: unfinished conversion from %s to %s", config.encoding, dst_encoding);
-            // We still use what we converted
-        }
-        send_buffer = converted;
-    }
+    char *formatted = NULL;
+
     const char *format;
     if (info != NULL && (format = apr_table_get(info->options, "format"))) {
         /* Securely apply format from configuration, ensuring the buffer is treated as data */
@@ -836,12 +791,6 @@ static const char *set_log_server_port(cmd_parms *cmd, void *cfg, const char *ar
     return NULL;
 }
 
-static const char *set_log_encoding(cmd_parms *cmd, void *cfg, const char *arg)
-{
-    config.encoding = arg;
-    return NULL;
-}
-
 static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     
     if (strcasecmp(entry_name, "request_time") == 0) {
@@ -1217,7 +1166,6 @@ static int post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, serve
 
 static int init_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp){
     bzero(&config, sizeof((config)));
-    config.encoding = "UTF-8";
 
     return OK;
 }
@@ -1226,7 +1174,6 @@ static const command_rec log_net_directives[] =
 {
     AP_INIT_TAKE1("LognetHost", set_log_server_host, NULL, RSRC_CONF, "Hostname of the log server"),
     AP_INIT_TAKE1("LognetPort", set_log_server_port, NULL, RSRC_CONF, "Port for the log server"),
-    AP_INIT_TAKE1("LognetEncoding", set_log_encoding, NULL, RSRC_CONF, "Encoding for output string"),
     AP_INIT_RAW_ARGS("LognetEntry", add_log_entry, NULL, RSRC_CONF, "Add a log entry"),
     AP_INIT_RAW_ARGS("LognetEntries", add_log_entries, NULL, RSRC_CONF, "Add many log entries"),
     { NULL }

@@ -13,7 +13,6 @@ Load it with `LoadModule log_net_module .../mod_log_net.so`
 
  * `LognetHost`: Hostname of the log server.
  * `LognetPort`: Port for the log server.
- * `LognetEncoding`: Encoding for output string, default to 'UTF-8'. Any valid value for libiconv can be given.
  * `LognetEntries`: Add many log entries, without options.
  * `LognetEntry`: Add a log entry, with optional parameters and options.
 
@@ -31,7 +30,7 @@ This is a server level configuration.
 
 # Installation
 
-The module needs msgpack-c and libiconv.
+The module needs msgpack-c.
 
     ./configure --with-msgpack=/opt/local
     make
@@ -96,7 +95,6 @@ For entries that need options, use `LognetEntry`:
 
  * `name`: Used to override the key name in the output message.
  * `format`: Formats the value using `printf` rules. Must contain exactly one `%s`.
- * `encoding`: Input encoding for the value (output is `LognetEncoding`). Default is ASCII. Invalid characters are replaced with '?'.
  * `request`: Extract information from original or final request in case of internal redirection (similar to `<` and `>`). By default, `status`, `remote_user`, `request_duration` and `request_duration_microseconds` use the original request, others use the final.
 
 # Examples
