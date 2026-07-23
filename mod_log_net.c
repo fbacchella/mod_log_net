@@ -74,6 +74,9 @@ typedef struct {
 static log_net_config_t config;
 static apr_socket_t    *udp_socket;
 static apr_sockaddr_t  *server_addr;
+static msgpack_sbuffer *mp_sbuf;
+static msgpack_packer  *mp_packer;
+static apr_thread_mutex_t *mp_mutex;
 
 /*
  * log_request_state holds request specific log data that is not
@@ -1050,9 +1053,16 @@ static size_t make_msgpack(request_rec *r, void **message)
     // Ensure a good precision end time for request
     get_request_end_time(r);
 
-    /* creates buffer and serializer instance. */
-    msgpack_sbuffer *buffer = msgpack_sbuffer_new();
-    msgpack_packer *pk = msgpack_packer_new(buffer, msgpack_sbuffer_write);
+    if (mp_sbuf == NULL || mp_packer == NULL) {
+        return 0;
+    }
+
+    if (mp_mutex) {
+        apr_thread_mutex_lock(mp_mutex);
+    }
+
+    /* Clear the buffer for reuse instead of creating new ones */
+    msgpack_sbuffer_clear(mp_sbuf);
     
     const apr_array_header_t *elts = apr_table_elts(config.entries);
     
@@ -1089,18 +1099,20 @@ static size_t make_msgpack(request_rec *r, void **message)
         }
         ++t_elt;
     } while (t_elt < t_end);
-    msgpack_pack_object(pk, mapping);
-    size_t size = buffer->size;
+    msgpack_pack_object(mp_packer, mapping);
+    size_t size = mp_sbuf->size;
     *message = (void *)apr_palloc(r->pool, size);
     if (*message != NULL) {
-        memcpy(*message, buffer->data, size);
+        memcpy(*message, mp_sbuf->data, size);
     } else {
         size = 0;
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "memory allocation failed");
     }
-    /* cleaning */
-    msgpack_sbuffer_free(buffer);
-    msgpack_packer_free(pk);
+
+    if (mp_mutex) {
+        apr_thread_mutex_unlock(mp_mutex);
+    }
+
     return size;
 }
 
@@ -1155,6 +1167,19 @@ static int init_udp_socket(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, s
     apr_status_t rv;
     server_addr = NULL;
     udp_socket = NULL;
+
+    /* Initialize persistent MsgPack structures */
+    mp_sbuf = msgpack_sbuffer_new();
+    mp_packer = msgpack_packer_new(mp_sbuf, msgpack_sbuffer_write);
+
+#if APR_HAS_THREADS
+    rv = apr_thread_mutex_create(&mp_mutex, APR_THREAD_MUTEX_DEFAULT, p);
+    if (rv != APR_SUCCESS) {
+        ap_log_error(APLOG_MARK, APLOG_CRIT, rv, s, "log_net: failed to create mutex");
+        return !OK;
+    }
+#endif
+
     if ((rv = apr_sockaddr_info_get(&server_addr, config.host, APR_UNSPEC, config.port, APR_IPV4_ADDR_OK, p)) != APR_SUCCESS) {
          ap_log_error(APLOG_MARK, APLOG_CRIT, rv, s,
                      "log_net: apr_sockaddr_info_get(%s:%d) failed",
