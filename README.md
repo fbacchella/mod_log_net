@@ -66,6 +66,7 @@ The logged information are copied from mod_log_config. Generaly any logged value
  * `remote_user`: The remote user (from auth; may be bogus if return status (%s) is 401). Same as %u.
  * `request_uri`: The URL path requested. Same as %U.
  * `server_name`: The server name according to the UseCanonicalName setting. Same as %V.
+ * `server_version`: The value of the server version, as returned by `apachectl -V | grep Server version`.
  * `server_port`: The canonical port for the server. The parameter can be `canonical`, `local`, default to `canonical`. Same as `%p`.
  * `request_method`: The request method. Same as %m.
  * `request_protocol`: The request protocol. Same as %H.

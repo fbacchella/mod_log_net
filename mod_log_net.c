@@ -676,6 +676,11 @@ static void log_server_name(msgpack_object *mp_obj, request_rec *r, log_entry_in
     msgpack_pack_encoded_string(mp_obj, r, info, ap_get_server_name(r));
 }
 
+static void log_server_version(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
+{
+    msgpack_pack_encoded_string(mp_obj, r, info, ap_get_server_description());
+}
+
 //%...m:  the request method
 static void log_request_method(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
 {
@@ -863,6 +868,9 @@ static bool resolve_pack(log_entry_info_t *entry_info, const char *entry_name) {
     }
     else if (strcasecmp(entry_name, "server_name") == 0) {
         entry_info->pack_entry = log_server_name;
+    }
+    else if (strcasecmp(entry_name, "server_version") == 0) {
+        entry_info->pack_entry = log_server_version;
     }
     else if (strcasecmp(entry_name, "request_method") == 0) {
         entry_info->pack_entry = log_request_method;
