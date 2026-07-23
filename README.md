@@ -41,7 +41,7 @@ The module needs msgpack-c.
 The logged information are copied from `mod_log_config`. Generally any logged value matches a custom log entity and shares the same options.
 
  * `agent_type`: The type of the log agent, fixed to `mod_log_net`.
- * `agent_version`: The version of the log agent.
+ * `module_version`: The version of the log agent.
  * `bytes_sent`: Bytes sent, excluding HTTP headers. Same as `%B`.
  * `connection_status`: Status of the connection. Same as `%X`.
  * `cookie`: The contents of the HTTP cookie given by the parameter. Same as `%{FOOBAR}C`.
