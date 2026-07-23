@@ -43,6 +43,7 @@ The logged information are copied from `mod_log_config`. Generally any logged va
  * `module_version`: The version of the log agent.
  * `bytes_sent`: Bytes sent, excluding HTTP headers. Same as `%B`.
  * `connection_status`: Status of the connection. Same as `%X`.
+ * `constant`: A constant string value provided as a parameter.
  * `cookie`: The contents of the HTTP cookie given by the parameter. Same as `%{FOOBAR}C`.
  * `env`: The contents of the environment variable given by the parameter. Same as `%{FOOBAR}e`.
  * `handler`: The handler generating the response. Same as `%R`.
@@ -89,6 +90,7 @@ For entries that need options, use `LognetEntry`:
 
     LognetEntry header_in Host
     LognetEntry cookie id
+    LognetEntry constant my_value name=my_constant
 
 # Options
 

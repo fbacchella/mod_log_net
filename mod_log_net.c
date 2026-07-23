@@ -762,6 +762,13 @@ static void log_hostname(msgpack_object *mp_obj, request_rec *r, log_entry_info_
     msgpack_pack_ascii_string(mp_obj, r, hostname);
 }
 
+static void log_constant(msgpack_object *mp_obj, request_rec *r, log_entry_info_t* info)
+{
+    if (info->param != NULL) {
+        msgpack_pack_ascii_string(mp_obj, r, info->param);
+    }
+}
+
 /*****
 * Directives management
 */
@@ -818,6 +825,7 @@ static const log_entry_dispatch_t dispatch_table[] = {
     {"request_query", log_request_query, TRUE},
     {"connection_status", log_connection_status, TRUE},
     {"hostname", log_hostname, TRUE},
+    {"constant", log_constant, TRUE},
 #if AP_MODULE_MAGIC_AT_LEAST(20111130,0)
     {"log_id", log_log_id, TRUE},
     {"handler", log_handler, TRUE},
@@ -860,7 +868,7 @@ add_log_entries(cmd_parms *cmd, void *dummy, const char *arg)
                          "log_net: new log entry %s", entry_name);
         }
         
-        apr_table_setn(config.entries, entry_name, (const char *)entry_info);
+        apr_table_addn(config.entries, entry_name, (const char *)entry_info);
     }
     return NULL;
 }
@@ -923,7 +931,7 @@ add_log_entry(cmd_parms *cmd, void *dummy, const char *arg)
             apr_table_setn(entry_info->options, word, val);
         }
     }
-    apr_table_setn(config.entries, entry_name, (const char *)entry_info);
+    apr_table_addn(config.entries, entry_name, (const char *)entry_info);
     return NULL;
 }
 
