@@ -13,6 +13,7 @@ Load it with `LoadModule log_net_module .../mod_log_net.so`
 
  * `LognetHost`: Hostname of the log server.
  * `LognetPort`: Port for the log server.
+ * `LognetMaxStringLen`: Maximum length of strings in logs (default is 8192).
  * `LognetEntries`: Add many log entries, without options.
  * `LognetEntry`: Add a log entry, with optional parameters and options.
 
@@ -75,7 +76,7 @@ The logged information are copied from `mod_log_config`. Generally any logged va
  * `requests_on_connection`: Number of keepalive requests served over this connection. Same as `%k`.
  * `server_name`: The server name according to the `UseCanonicalName` setting. Same as `%V`.
  * `server_port`: The canonical port for the server. Parameters: `canonical`, `local`. Default is `canonical`. Same as `%p`.
- * `server_version`: The server version (matches `service.version` in ECS).
+ * `server_version`: The server version.
  * `ssl_var`: Variables from `mod_ssl` (if loaded). Same as `%x`.
  * `status`: The response status. For internal redirects, this is the status of the *original* request. Same as `%s`.
  * `virtual_host`: The configured name of the server (Virtual Host). Same as `%v`.

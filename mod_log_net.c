@@ -67,6 +67,7 @@ typedef struct {
     const char   *host;
     apr_port_t    port;
     apr_table_t  *entries;
+    size_t        max_str_len;
 } log_net_config_t;
 
 static log_net_config_t config;
@@ -104,8 +105,8 @@ static void msgpack_pack_string(msgpack_object *mp_obj, request_rec *r, log_entr
     }
 
     size_t len = strlen(send_buffer);
-    if (len > MAX_STRING_LEN) {
-        len = MAX_STRING_LEN;
+    if (len > config.max_str_len) {
+        len = config.max_str_len;
     }
 
     mp_obj->type = MSGPACK_OBJECT_STR;
@@ -516,8 +517,8 @@ static void log_request_time_custom(msgpack_object *mp_obj, request_rec *r, log_
                                     const char *a, apr_time_exp_t *xt)
 {
     apr_size_t retcode;
-    char *tstr = apr_palloc(r->pool, MAX_STRING_LEN);
-    apr_strftime(tstr, &retcode, MAX_STRING_LEN, a, xt);
+    char *tstr = apr_palloc(r->pool, config.max_str_len);
+    apr_strftime(tstr, &retcode, config.max_str_len, a, xt);
     msgpack_pack_encoded_string(mp_obj, r, info, tstr);
 }
 
@@ -782,6 +783,12 @@ static const char *set_log_server_host(cmd_parms *cmd, void *cfg, const char *ar
 static const char *set_log_server_port(cmd_parms *cmd, void *cfg, const char *arg)
 {
     config.port = atoi(arg);
+    return NULL;
+}
+
+static const char *set_max_str_len(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    config.max_str_len = atoi(arg);
     return NULL;
 }
 
@@ -1101,6 +1108,7 @@ static int post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, serve
 
 static int init_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp){
     bzero(&config, sizeof((config)));
+    config.max_str_len = MAX_STRING_LEN;
 
     return OK;
 }
@@ -1109,6 +1117,7 @@ static const command_rec log_net_directives[] =
 {
     AP_INIT_TAKE1("LognetHost", set_log_server_host, NULL, RSRC_CONF, "Hostname of the log server"),
     AP_INIT_TAKE1("LognetPort", set_log_server_port, NULL, RSRC_CONF, "Port for the log server"),
+    AP_INIT_TAKE1("LognetMaxStringLen", set_max_str_len, NULL, RSRC_CONF, "Maximum length of strings in logs"),
     AP_INIT_RAW_ARGS("LognetEntry", add_log_entry, NULL, RSRC_CONF, "Add a log entry"),
     AP_INIT_RAW_ARGS("LognetEntries", add_log_entries, NULL, RSRC_CONF, "Add many log entries"),
     { NULL }
